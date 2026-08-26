@@ -9,6 +9,7 @@ const {
   generatePath,
   generateIssueFiles,
   generateIssueMd,
+  searchIssues,
 } = require('../export-issues.js');
 
 const text = (t) => ({ type: 'text', text: t });
@@ -108,4 +109,83 @@ test('generateIssueMd renders comments', () => {
   assert.ok(md.includes('### Comment 1'));
   assert.ok(md.includes('**Author:** Bob | **Date:** 2026-02-01'));
   assert.ok(md.includes('hi'));
+});
+
+// --- searchIssues pagination ---
+
+const fakeSearchPage = (responder) => {
+  const urls = [];
+  return {
+    urls,
+    request: {
+      get: async (url) => {
+        urls.push(url);
+        return responder(url);
+      },
+    },
+  };
+};
+
+const ok = (payload) => ({
+  ok: () => true,
+  status: () => 200,
+  json: async () => payload,
+});
+
+test('searchIssues follows nextPageToken across pages', async () => {
+  const a = { key: 'A-1', fields: { summary: 'a' } };
+  const b = { key: 'B-1', fields: { summary: 'b' } };
+  const page = fakeSearchPage((url) =>
+    url.includes('nextPageToken=')
+      ? ok({ issues: [b], isLast: true })
+      : ok({ issues: [a], isLast: false, nextPageToken: 'tok1' })
+  );
+
+  const issues = await searchIssues(page, 'https://x.atlassian.net', 'summary');
+
+  assert.deepEqual(issues.map(i => i.key), ['A-1', 'B-1']);
+  assert.equal(page.urls.length, 2);
+  assert.ok(page.urls[1].includes('nextPageToken=tok1'));
+});
+
+test('searchIssues stops after a single last page', async () => {
+  const page = fakeSearchPage(() => ok({ issues: [{ key: 'A-1', fields: { summary: 'a' } }], isLast: true }));
+
+  const issues = await searchIssues(page, 'https://x.atlassian.net', 'summary');
+
+  assert.equal(issues.length, 1);
+  assert.equal(page.urls.length, 1);
+  assert.ok(!page.urls[0].includes('nextPageToken='));
+});
+
+test('searchIssues throws on a non-OK response', async () => {
+  const page = fakeSearchPage(() => ({
+    ok: () => false,
+    status: () => 401,
+    json: async () => ({}),
+  }));
+
+  await assert.rejects(
+    () => searchIssues(page, 'https://x.atlassian.net', 'summary'),
+    /401/
+  );
+});
+
+// --- orphaned issues (parent could not be fetched) ---
+
+test('generateIssueFiles exports an orphan subtree without its missing parent', () => {
+  const orphan = issue('ORPH-2', 'Task', 'Orphan task', 'GONE-1');
+  const child = issue('ORPH-3', 'Sub-task', 'Orphan child', 'ORPH-2');
+  const orphanMap = { 'ORPH-2': orphan, 'ORPH-3': child };
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-export-orphan-'));
+  try {
+    generateIssueFiles(orphan, generatePath(orphan, orphanMap), tmpDir, orphanMap);
+
+    assert.ok(fs.existsSync(path.join(tmpDir, 'ORPH-2-orphan-task/_task.md')));
+    assert.ok(fs.existsSync(path.join(tmpDir, 'ORPH-2-orphan-task/ORPH-3-orphan-child.md')));
+    assert.ok(!fs.readdirSync(tmpDir).some(name => name.startsWith('GONE-1')));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
