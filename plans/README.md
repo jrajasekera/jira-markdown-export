@@ -13,7 +13,7 @@ interactive (headed browser + live Jira) and is never a verification gate.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001 | Test baseline: export functions, `node --test` suite | P1 | M | — | TODO |
+| 001 | Test baseline: export functions, `node --test` suite | P1 | M | — | DONE |
 | 007 | Non-zero exit on failure; clear output dir safely | P2 | S | — | TODO |
 | 009 | package.json / lockfile hygiene | P3 | S | — | TODO |
 | 002 | Paginate search; export orphaned issues at top level | P1 | S | 001 | TODO |

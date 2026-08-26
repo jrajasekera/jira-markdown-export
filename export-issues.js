@@ -425,5 +425,22 @@ function waitForUserInput() {
   });
 }
 
-// Run the export
-exportJiraIssues();
+module.exports = {
+  descriptionToMd,
+  processNode,
+  processContent,
+  processListItem,
+  sanitizeFilename,
+  sanitizeDir,
+  generatePath,
+  generateIssueFiles,
+  generateIssueMd,
+  generateMarkdown,
+  fetchAllParentIssues,
+};
+
+// Run the export only when invoked directly (`node export-issues.js`),
+// not when required by tests.
+if (require.main === module) {
+  exportJiraIssues();
+}
