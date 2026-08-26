@@ -16,6 +16,7 @@ output/
 # IDE
 .vscode/
 .idea/
+.serena/
 *.swp
 *.swo
 *~
