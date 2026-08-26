@@ -42,24 +42,11 @@ async function exportJiraIssues() {
       'parent'
     ].join(',');
 
-    const searchResponse = await page.request.get(
-      `${JIRA_URL}/rest/api/3/search/jql?jql=assignee=currentUser()&maxResults=50&fields=${fields}`,
-      {
-        headers: {
-          'Accept': 'application/json',
-        }
-      }
-    );
-
-    if (!searchResponse.ok()) {
-      throw new Error(`API error: ${searchResponse.status()}`);
-    }
-
-    const searchData = await searchResponse.json();
-    console.log(`[+] Found ${searchData.issues.length} assigned issues`);
+    const searchIssuesResult = await searchIssues(page, JIRA_URL, fields);
+    console.log(`[+] Found ${searchIssuesResult.length} assigned issues`);
 
     // 3. Fetch all parent issues recursively
-    const allIssues = await fetchAllParentIssues(searchData.issues, page, JIRA_URL, fields);
+    const allIssues = await fetchAllParentIssues(searchIssuesResult, page, JIRA_URL, fields);
     console.log(`[+] Total issues with parents: ${allIssues.length}`);
 
     // 4. Generate markdown
@@ -86,8 +73,14 @@ async function generateMarkdown(issues) {
     allIssuesMap[issue.key] = issue;
   });
 
-  // Find root issues (those without parent)
-  const rootIssues = issues.filter(issue => !issue.fields.parent);
+  // Root issues: no parent, or a parent that could not be fetched
+  const rootIssues = issues.filter(issue => {
+    const parentKey = issue.fields.parent?.key;
+    if (!parentKey) return true;
+    if (allIssuesMap[parentKey]) return false;
+    console.log(`[-] Parent ${parentKey} of ${issue.key} not available; exporting ${issue.key} at top level`);
+    return true;
+  });
 
   console.log(`[*] Processing ${rootIssues.length} root issues...`);
 
@@ -362,6 +355,35 @@ function processNode(node) {
   }
 }
 
+async function searchIssues(page, jiraUrl, fieldsString) {
+  const issues = [];
+  let nextPageToken;
+
+  do {
+    const tokenParam = nextPageToken ? `&nextPageToken=${nextPageToken}` : '';
+    const response = await page.request.get(
+      `${jiraUrl}/rest/api/3/search/jql?jql=assignee=currentUser()&maxResults=100&fields=${fieldsString}${tokenParam}`,
+      {
+        headers: {
+          'Accept': 'application/json',
+        }
+      }
+    );
+
+    if (!response.ok()) {
+      throw new Error(`API error: ${response.status()}`);
+    }
+
+    const data = await response.json();
+    issues.push(...(data.issues || []));
+    console.log(`[*] Fetched ${issues.length} issues so far`);
+
+    nextPageToken = data.isLast ? undefined : data.nextPageToken;
+  } while (nextPageToken);
+
+  return issues;
+}
+
 async function fetchAllParentIssues(issues, page, jiraUrl, fieldsString) {
   const processedKeys = new Set();
   const allIssuesMap = new Map();
@@ -436,6 +458,7 @@ module.exports = {
   generateIssueFiles,
   generateIssueMd,
   generateMarkdown,
+  searchIssues,
   fetchAllParentIssues,
 };
 
