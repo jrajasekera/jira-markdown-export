@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "jira_markdown_export",
+  "project_id": "bc8778d3-dbc3-404c-a93e-95cb577b2ea0"
+}
