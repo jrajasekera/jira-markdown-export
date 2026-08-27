@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const readline = require('readline');
 require('dotenv').config();
@@ -62,11 +63,27 @@ async function exportJiraIssues() {
   }
 }
 
-async function generateMarkdown(issues) {
-  // Create output directory
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+function prepareOutputDir(dir) {
+  const resolved = path.resolve(dir);
+  const forbidden = [
+    path.parse(resolved).root,          // filesystem root
+    os.homedir(),
+    process.cwd(),
+    __dirname,                          // the repo checkout
+  ].map(p => path.resolve(p));
+
+  if (forbidden.includes(resolved)) {
+    throw new Error(`Refusing to clear ${resolved}: it is not a dedicated export directory`);
   }
+
+  console.log(`[*] Clearing ${resolved}`);
+  fs.rmSync(resolved, { recursive: true, force: true });
+  fs.mkdirSync(resolved, { recursive: true });
+  return resolved;
+}
+
+async function generateMarkdown(issues) {
+  prepareOutputDir(OUTPUT_DIR);
 
   // Build issues map for quick lookup
   const allIssuesMap = {};
@@ -467,6 +484,7 @@ function waitForUserInput() {
 }
 
 module.exports = {
+  prepareOutputDir,
   descriptionToMd,
   processNode,
   processContent,

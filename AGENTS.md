@@ -64,8 +64,10 @@ The export pipeline in `export-issues.js` is:
 - Root links generated for `index.md` omit the issue key even though root
   directories include it, so those links are currently broken. Keep link and
   directory naming derived from the same value when fixing this.
-- Top-level export errors are logged and set exit code 1. Parent-fetch failures
-  are still logged and skipped.
+- Top-level export errors are logged and set exit code 1. The output directory
+  is cleared and recreated on every run by `prepareOutputDir`, which refuses to
+  delete `/`, `$HOME`, the cwd, or the repo root. Parent-fetch failures are
+  still logged and skipped.
 - `.env`, `exported-issues/`, and `output/` are local artifacts and must not be
   committed. Never add Jira session data, credentials, or exported issue data
   to the repository.

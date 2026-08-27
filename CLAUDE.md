@@ -28,7 +28,7 @@ Everything lives in the single file `export-issues.js` (~430 lines). The pipelin
 - Config knobs are edited in source, not passed as flags: the JQL query and the `fields` array are literals near the top of `exportJiraIssues`. Adding a Jira field means adding it to that array *and* rendering it in `generateIssueMd`.
 - `allIssuesMap` is a `Map` inside `fetchAllParentIssues` but a plain object everywhere downstream (`generateMarkdown` rebuilds it). Keep the object form when touching `generatePath` / `generateIssueFiles`, which index it with `[key]`.
 - `index.md` links to root folders as `sanitized-summary/...`, while the actual folders are named `KEY-sanitized-summary/` — root-issue links in the index are broken. Fix by using the same `${key}-${sanitizeDir(summary)}` form if you touch that code.
-- Errors in `exportJiraIssues` are caught and logged and the process exits 1. Per-parent fetch failures are logged and skipped rather than aborting the run.
+- Errors in `exportJiraIssues` are caught and logged and the process exits 1. The output directory is cleared and recreated on every run (`prepareOutputDir`, which refuses `/`, `$HOME`, cwd, and the repo root). Per-parent fetch failures are logged and skipped rather than aborting the run.
 - `exported-issues/` and `.env` are gitignored; the export is a throwaway artifact.
 
 
