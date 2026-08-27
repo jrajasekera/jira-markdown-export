@@ -9,6 +9,10 @@ const JIRA_URL = process.env.JIRA_URL || 'https://your-instance.atlassian.net';
 const OUTPUT_DIR = process.env.OUTPUT_DIR || './exported-issues';
 const JQL = process.env.JIRA_JQL || 'assignee = currentUser()';
 
+// Download attachments referenced by issues into <issue dir>/attachments/.
+const DOWNLOAD_ATTACHMENTS = process.env.JIRA_DOWNLOAD_ATTACHMENTS === '1';
+const MAX_ATTACHMENT_MB = Number(process.env.JIRA_MAX_ATTACHMENT_MB || 25);
+
 // Path to Playwright storageState JSON. Set JIRA_STATE_FILE= (empty) to disable.
 const STATE_FILE = process.env.JIRA_STATE_FILE === undefined
   ? '.jira-session.json'
@@ -65,7 +69,8 @@ async function exportJiraIssues({ issueKey } = {}) {
       'labels',
       'resolution',
       'comment',
-      'parent'
+      'parent',
+      'attachment'
     ].join(',');
 
     let seedIssues;
@@ -87,7 +92,7 @@ async function exportJiraIssues({ issueKey } = {}) {
     console.log(`[+] Total issues with parents: ${allIssues.length}`);
 
     // 4. Generate markdown
-    await generateMarkdown(allIssues);
+    await generateMarkdown(allIssues, page);
 
     console.log(`[+] Exported to: ${OUTPUT_DIR}`);
 
@@ -118,7 +123,7 @@ function prepareOutputDir(dir) {
   return resolved;
 }
 
-async function generateMarkdown(issues) {
+async function generateMarkdown(issues, page) {
   prepareOutputDir(OUTPUT_DIR);
 
   // Build issues map for quick lookup
@@ -138,13 +143,20 @@ async function generateMarkdown(issues) {
 
   console.log(`[*] Processing ${rootIssues.length} root issues...`);
 
-  // Generate files for each root issue and its children
+  // Generate files for each root issue and its children. When attachments are
+  // enabled, each write is also recorded so they can be fetched afterwards;
+  // generateIssueFiles itself stays synchronous.
+  const writes = DOWNLOAD_ATTACHMENTS ? [] : null;
   rootIssues.forEach(rootIssue => {
     const pathInfo = generatePath(rootIssue, allIssuesMap);
-    generateIssueFiles(rootIssue, pathInfo, OUTPUT_DIR, allIssuesMap);
+    generateIssueFiles(rootIssue, pathInfo, OUTPUT_DIR, allIssuesMap, writes);
   });
 
   fs.writeFileSync(path.join(OUTPUT_DIR, 'index.md'), renderIndex(issues, rootIssues, allIssuesMap));
+
+  if (writes && page) {
+    await downloadAttachments(writes, page, MAX_ATTACHMENT_MB);
+  }
 }
 
 // Path of an issue's Markdown file, relative to the output root.
@@ -201,7 +213,7 @@ function generatePath(issue, allIssuesMap) {
   return { path, isFile };
 }
 
-function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap) {
+function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = null) {
   const { path: pathChain, isFile } = pathInfo;
 
   // Build directory path
@@ -224,10 +236,9 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap) {
       const issueData = allIssuesMap[pathItem.key];
       if (issueData) {
         const parentIssue = allIssuesMap[issueData.fields.parent?.key];
-        fs.writeFileSync(
-          path.join(currentDir, infoFilename(pathItem.type)),
-          generateIssueMd(issueData, parentIssue, false)
-        );
+        const filePath = path.join(currentDir, infoFilename(pathItem.type));
+        fs.writeFileSync(filePath, generateIssueMd(issueData, parentIssue, false));
+        recordWrite(writes, issueData, filePath, currentDir);
       }
     }
   }
@@ -236,7 +247,9 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap) {
   if (isFile) {
     const filename = sanitizeFilename(issue.key, issue.fields.summary) + '.md';
     const parentIssue = allIssuesMap[issue.fields.parent?.key];
-    fs.writeFileSync(path.join(currentDir, filename), generateIssueMd(issue, parentIssue, true));
+    const filePath = path.join(currentDir, filename);
+    fs.writeFileSync(filePath, generateIssueMd(issue, parentIssue, true));
+    recordWrite(writes, issue, filePath, currentDir);
   }
 
   // Find and generate child issues
@@ -246,8 +259,137 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap) {
 
   children.forEach(child => {
     const childPathInfo = generatePath(child, allIssuesMap);
-    generateIssueFiles(child, childPathInfo, baseDir, allIssuesMap);
+    generateIssueFiles(child, childPathInfo, baseDir, allIssuesMap, writes);
   });
+}
+
+// generateIssueFiles walks a chain, so the same folder issue is written once per
+// descendant. Record each issue file only the first time it is written.
+function recordWrite(writes, issue, filePath, dir) {
+  if (!writes) return;
+  if (writes.some(w => w.filePath === filePath)) return;
+  writes.push({ issue, filePath, dir });
+}
+
+// Atlassian media-services ids are UUIDs; the ADF `media` node's attrs.id is one.
+const MEDIA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// On-disk name for a downloaded attachment: the REST id keeps it unique, the
+// sanitized stem keeps it readable.
+function attachmentFilename(att) {
+  const base = att.filename || 'file';
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+  return `${att.id}-${sanitizeDir(stem)}${ext ? '.' + ext : ''}`;
+}
+
+// Every identifier a `attachment:<key>` placeholder might carry. Jira does not
+// document which field (if any) of the REST attachment record holds the media
+// UUID used by ADF, so accept the REST id, the filename, and any UUID-shaped
+// value on the record. Unmatched placeholders are simply left alone.
+function attachmentKeys(att, { skipFilename = false } = {}) {
+  const keys = new Set();
+  if (att.id !== undefined && att.id !== null) keys.add(String(att.id));
+  if (att.filename && !skipFilename) keys.add(att.filename);
+  Object.values(att).forEach(value => {
+    if (typeof value === 'string' && MEDIA_UUID.test(value)) keys.add(value);
+  });
+  return [...keys];
+}
+
+// Replace `attachment:<key>` placeholders using a Map<key, relativePath>. The
+// link text is tried as a fallback key because Jira usually sets a media node's
+// alt text to the attachment filename. Unresolved placeholders are left as-is.
+function rewriteAttachmentLinks(markdown, mapping) {
+  return markdown.replace(
+    /(!?)\[([^\]]*)\]\(attachment:([^)]+)\)/g,
+    (match, bang, alt, key) => {
+      const target = mapping.get(key) || mapping.get(alt);
+      return target ? `${bang}[${alt}](${target})` : match;
+    }
+  );
+}
+
+function renderAttachmentList(entries) {
+  return `\n\n## Attachments\n\n${entries.map(e => `- [${e.filename}](${e.relPath})`).join('\n')}\n`;
+}
+
+// Fetch every attachment of every written issue file, then rewrite that file's
+// placeholders and append a link list. Failures are logged and skipped so one
+// bad attachment never aborts the export.
+async function downloadAttachments(writes, page, maxMb) {
+  const limit = maxMb * 1024 * 1024;
+  let downloaded = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const { issue, filePath, dir } of writes) {
+    const attachments = issue.fields?.attachment || [];
+    if (attachments.length === 0) continue;
+
+    const seen = new Set();
+    const ambiguous = new Set();
+    attachments.forEach(att => {
+      if (!att.filename) return;
+      if (seen.has(att.filename)) ambiguous.add(att.filename);
+      seen.add(att.filename);
+    });
+    ambiguous.forEach(name => {
+      console.log(`[-] Ambiguous attachment mapping for ${name} on ${issue.key}; matching by id only`);
+    });
+
+    const attachmentDir = path.join(dir, 'attachments');
+    const mapping = new Map();
+    const listed = [];
+
+    for (const att of attachments) {
+      const label = att.filename || att.id;
+
+      if (att.size > limit) {
+        console.log(`[-] Skipping ${label} (${(att.size / 1024 / 1024).toFixed(1)} MB > ${maxMb} MB)`);
+        skipped++;
+        continue;
+      }
+      if (!att.content) {
+        console.log(`[-] Failed to download ${label}: no content URL`);
+        failed++;
+        continue;
+      }
+
+      let res;
+      try {
+        res = await page.request.get(att.content);
+      } catch (error) {
+        console.log(`[-] Failed to download ${label}: ${error.message}`);
+        failed++;
+        continue;
+      }
+      if (!res.ok()) {
+        console.log(`[-] Failed to download ${label} (${res.status ? res.status() : 'not ok'})`);
+        failed++;
+        continue;
+      }
+
+      const name = attachmentFilename(att);
+      fs.mkdirSync(attachmentDir, { recursive: true });
+      fs.writeFileSync(path.join(attachmentDir, name), await res.body());
+      console.log(`[+] Downloaded ${label}`);
+      downloaded++;
+
+      const relPath = `attachments/${name}`;
+      attachmentKeys(att, { skipFilename: ambiguous.has(att.filename) })
+        .forEach(key => mapping.set(key, relPath));
+      listed.push({ filename: label, relPath });
+    }
+
+    if (listed.length === 0) continue;
+    const markdown = fs.readFileSync(filePath, 'utf8');
+    fs.writeFileSync(filePath, rewriteAttachmentLinks(markdown, mapping) + renderAttachmentList(listed));
+  }
+
+  console.log(`[+] Attachments: ${downloaded} downloaded, ${skipped} skipped, ${failed} failed`);
+  return { downloaded, skipped, failed };
 }
 
 function sanitizeFilename(key, summary) {
@@ -730,6 +872,10 @@ module.exports = {
   generateIssueFiles,
   generateIssueMd,
   generateMarkdown,
+  attachmentFilename,
+  attachmentKeys,
+  rewriteAttachmentLinks,
+  downloadAttachments,
   infoFilename,
   renderIndex,
   parseIssueRef,

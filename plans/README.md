@@ -24,7 +24,7 @@ interactive (headed browser + live Jira) and is never a verification gate.
 | 008 | Encode query params; hoist JQL to `JIRA_JQL` env | P3 | S | 002 | DONE |
 | 010 | Direction: persist browser session (storageState) | P3 | M | 007 | DONE (Step 6 live verification: not run) |
 | 011 | Direction: configurable query, limits, extra fields | P3 | S–M | 008 | TODO |
-| 012 | Direction: download attachments | P3 | M | 002, 006 | TODO |
+| 012 | Direction: download attachments | P3 | M | 002, 006 | DONE (Step 2 spike skipped by operator; branch-agnostic join — see note) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 
@@ -41,6 +41,18 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
   `attachment:<id>` placeholders.
 - 008 edits the `searchIssues` function 002 introduces; 011 builds on the
   `JIRA_JQL` env var 008 introduces.
+
+## Plan 012 note: the attachment join key
+
+Step 2 of plan 012 was a live-Jira spike to decide whether to join ADF media
+nodes to REST attachment records on a media UUID (branch 1), on the filename
+(branch 2), or not at all (branch 3). The operator chose to skip the spike in
+favour of a design that covers all three: `attachmentKeys` maps each attachment
+under its REST id, its filename, and any UUID-shaped field on the record, and
+`rewriteAttachmentLinks` also tries the placeholder's alt text as a key. Every
+attachment is downloaded and listed under `## Attachments` regardless, so
+branch 3's guarantee holds even when no placeholder resolves. Unresolved
+placeholders are left as `attachment:<id>`.
 
 ## Findings considered and rejected
 

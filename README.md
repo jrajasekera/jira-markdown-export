@@ -132,6 +132,38 @@ const fields = [
 ].join(',');
 ```
 
+### Attachments
+
+Attachment download is **off** by default. Turn it on in `.env`:
+
+```bash
+JIRA_DOWNLOAD_ATTACHMENTS=1   # 1 = download, anything else = off
+JIRA_MAX_ATTACHMENT_MB=25     # skip anything larger (default 25)
+```
+
+Each issue's attachments are written next to its Markdown file:
+
+```
+PROJ-1-my-epic/
+├── _epic.md
+└── attachments/
+    └── 10042-screenshot.png     # <REST id>-<sanitized name>.<ext>
+```
+
+The Markdown file then gets an `## Attachments` section linking every file that
+downloaded, and image placeholders in the description are rewritten to point at
+the local copy where they can be matched.
+
+Jira's ADF description references images by an Atlassian *media services* UUID,
+which is not the same identifier as the REST attachment id. The exporter matches
+a placeholder against the attachment's REST id, its filename, the image's alt
+text, and any UUID-shaped field on the attachment record. Anything that still
+cannot be matched is left as `attachment:<id>` rather than dropped — the file is
+still downloaded and still listed under `## Attachments`.
+
+Attachments referenced only from comment bodies are downloaded and listed, but
+their placeholders are rewritten only when one of the keys above matches.
+
 ## How It Works
 
 1. **Authentication**: Playwright launches a browser and you log in via SSO
