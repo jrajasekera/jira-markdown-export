@@ -19,7 +19,7 @@ interactive (headed browser + live Jira) and is never a verification gate.
 | 002 | Paginate search; export orphaned issues at top level | P1 | S | 001 | DONE |
 | 003 | Render `link` marks and inlineCard URLs | P1 | S | 001 | DONE |
 | 004 | Detect sub-tasks by `issuetype.subtask` flag | P1 | S | 001 | DONE |
-| 005 | Fix index and parent links in generated Markdown | P2 | S | 001, 004 | TODO |
+| 005 | Fix index and parent links in generated Markdown | P2 | S | 001, 004 | DONE |
 | 006 | Extend ADF coverage (tables, nested lists, panels, …) | P2 | M | 001, 003 | TODO |
 | 008 | Encode query params; hoist JQL to `JIRA_JQL` env | P3 | S | 002 | TODO |
 | 010 | Direction: persist browser session (storageState) | P3 | M | 007 | TODO |

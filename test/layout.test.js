@@ -10,6 +10,7 @@ const {
   generatePath,
   generateIssueFiles,
   generateIssueMd,
+  renderIndex,
   searchIssues,
 } = require('../export-issues.js');
 
@@ -121,14 +122,71 @@ test('generateIssueFiles lays out folders, info files and subtask files', () => 
 });
 
 test('generateIssueMd renders the issue header and metadata', () => {
-  const md = generateIssueMd(sub);
+  const md = generateIssueMd(sub, story, true);
   assert.equal(md.split('\n')[0], '# PRJ-3 - Do thing');
   assert.ok(md.includes('**Type:** Sub-task | **Status:** To Do | **Priority:** Medium'));
   assert.ok(md.includes('**Created:** 2026-01-02'));
   assert.ok(md.includes('No description'));
-  // characterization: fixed in plan 005 (parent link points at ../PRJ-2, but the
-  // folder is actually named PRJ-2-a-story)
-  assert.ok(md.includes('**Parent:** [PRJ-2](../PRJ-2)'));
+  assert.ok(md.includes('**Parent:** [PRJ-2 - A story](_story.md)'));
+});
+
+test('generateIssueMd renders parent link for a leaf file', () => {
+  const md = generateIssueMd(sub, story, true);
+  assert.ok(md.includes('**Parent:** [PRJ-2 - A story](_story.md)'));
+});
+
+test('generateIssueMd renders parent link for a folder issue', () => {
+  const md = generateIssueMd(story, epic, false);
+  assert.ok(md.includes('**Parent:** [PRJ-1 - Big Epic!](../_epic.md)'));
+});
+
+test('generateIssueMd omits link when parent is not exported', () => {
+  const md = generateIssueMd(story, undefined, false);
+  assert.ok(md.includes('**Parent:** PRJ-1'));
+  assert.ok(!md.includes(']('));
+});
+
+test('renderIndex links root issues by their real folder and file names', () => {
+  const rootSub = issue('PRJ-9', 'Sub-task', 'Loose end');
+  const indexMap = { ...map, 'PRJ-9': rootSub };
+  const md = renderIndex(Object.values(indexMap), [epic, rootSub], indexMap);
+
+  assert.ok(md.includes('- [Epic: PRJ-1 - Big Epic!](PRJ-1-big-epic/_epic.md)'));
+  assert.ok(md.includes('- [Sub-task: PRJ-9 - Loose end](PRJ-9-loose-end.md)'));
+});
+
+const mdFilesIn = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+  const full = path.join(dir, entry.name);
+  if (entry.isDirectory()) return mdFilesIn(full);
+  return entry.name.endsWith('.md') ? [full] : [];
+});
+
+test('all generated relative links resolve to existing files', () => {
+  const rootSub = issue('PRJ-9', 'Sub-task', 'Loose end');
+  const linkMap = { ...map, 'PRJ-9': rootSub };
+  const roots = [epic, rootSub];
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-export-links-'));
+  try {
+    roots.forEach(root => generateIssueFiles(root, generatePath(root, linkMap), tmpDir, linkMap));
+    fs.writeFileSync(
+      path.join(tmpDir, 'index.md'),
+      renderIndex(Object.values(linkMap), roots, linkMap)
+    );
+
+    let checked = 0;
+    for (const file of mdFilesIn(tmpDir)) {
+      for (const [, href] of fs.readFileSync(file, 'utf8').matchAll(/\]\(([^)]+)\)/g)) {
+        if (/^[a-z]+:/.test(href)) continue;
+        const resolved = path.resolve(path.dirname(file), href);
+        assert.ok(fs.existsSync(resolved), `${file} -> ${href}`);
+        checked++;
+      }
+    }
+    assert.ok(checked >= 3, `expected at least 3 links, checked ${checked}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('generateIssueMd renders comments', () => {
@@ -140,7 +198,7 @@ test('generateIssueMd renders comments', () => {
       body: { content: [para(text('hi'))] },
     }],
   };
-  const md = generateIssueMd(withComment);
+  const md = generateIssueMd(withComment, undefined, false);
   assert.ok(md.includes('### Comment 1'));
   assert.ok(md.includes('**Author:** Bob | **Date:** 2026-02-01'));
   assert.ok(md.includes('hi'));

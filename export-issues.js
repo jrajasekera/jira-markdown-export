@@ -108,8 +108,20 @@ async function generateMarkdown(issues) {
     generateIssueFiles(rootIssue, pathInfo, OUTPUT_DIR, allIssuesMap);
   });
 
-  // Generate index.md
-  const indexContent = `# Jira Issues Export
+  fs.writeFileSync(path.join(OUTPUT_DIR, 'index.md'), renderIndex(issues, rootIssues, allIssuesMap));
+}
+
+// Path of an issue's Markdown file, relative to the output root.
+function indexHref(issue, allIssuesMap) {
+  if (generatePath(issue, allIssuesMap).isFile) {
+    return `${sanitizeFilename(issue.key, issue.fields.summary)}.md`;
+  }
+  const type = issue.fields.issuetype?.name || 'Unknown';
+  return `${issue.key}-${sanitizeDir(issue.fields.summary)}/${infoFilename(type)}`;
+}
+
+function renderIndex(issues, rootIssues, allIssuesMap) {
+  return `# Jira Issues Export
 
 **Export date:** ${new Date().toISOString().split('T')[0]}
 
@@ -119,14 +131,9 @@ async function generateMarkdown(issues) {
 
 ${rootIssues.map(issue => {
   const type = issue.fields.issuetype?.name || 'Unknown';
-  const pathInfo = generatePath(issue, allIssuesMap);
-  const isFile = pathInfo.isFile;
-  const filename = isFile ? `${sanitizeFilename(issue.key, issue.fields.summary)}.md` : `${sanitizeDir(issue.fields.summary)}/_${type.toLowerCase().replace('-', '')}.md`;
-  return `- [${type}: ${issue.key} - ${issue.fields.summary}](${filename})`;
+  return `- [${type}: ${issue.key} - ${issue.fields.summary}](${indexHref(issue, allIssuesMap)})`;
 }).join('\n')}
 `;
-
-  fs.writeFileSync(path.join(OUTPUT_DIR, 'index.md'), indexContent);
 }
 
 function isSubtask(issue) {
@@ -180,9 +187,11 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap) {
     if (i === folderCount - 1 || (isFile && i === pathChain.length - 2)) {
       const issueData = allIssuesMap[pathItem.key];
       if (issueData) {
-        const typePrefix = pathItem.type.toLowerCase().replace('-', '');
-        const infoFilename = `_${typePrefix}.md`;
-        fs.writeFileSync(path.join(currentDir, infoFilename), generateIssueMd(issueData));
+        const parentIssue = allIssuesMap[issueData.fields.parent?.key];
+        fs.writeFileSync(
+          path.join(currentDir, infoFilename(pathItem.type)),
+          generateIssueMd(issueData, parentIssue, false)
+        );
       }
     }
   }
@@ -190,7 +199,8 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap) {
   // If current issue is a file (subtask), write it
   if (isFile) {
     const filename = sanitizeFilename(issue.key, issue.fields.summary) + '.md';
-    fs.writeFileSync(path.join(currentDir, filename), generateIssueMd(issue));
+    const parentIssue = allIssuesMap[issue.fields.parent?.key];
+    fs.writeFileSync(path.join(currentDir, filename), generateIssueMd(issue, parentIssue, true));
   }
 
   // Find and generate child issues
@@ -212,6 +222,11 @@ function sanitizeFilename(key, summary) {
   return `${key}-${sanitized}`;
 }
 
+// Info file written inside a folder issue's directory (_epic.md, _story.md, ...)
+function infoFilename(typeName) {
+  return `_${(typeName || 'unknown').toLowerCase().replace('-', '')}.md`;
+}
+
 function sanitizeDir(summary) {
   return summary
     .toLowerCase()
@@ -219,7 +234,7 @@ function sanitizeDir(summary) {
     .replace(/^-|-$/g, '');
 }
 
-function generateIssueMd(issue) {
+function generateIssueMd(issue, parentIssue, isFile) {
   const { key, fields } = issue;
   const {
     summary,
@@ -235,7 +250,16 @@ function generateIssueMd(issue) {
   } = fields;
 
   const issueType = fields.issuetype?.name || 'N/A';
-  const parentInfo = parent ? `\n**Parent:** [${parent.key}](../${parent.key})` : '';
+  // A leaf file sits beside its parent's info file; a folder issue's info file
+  // sits one level below it.
+  let parentInfo = '';
+  if (parent && parentIssue) {
+    const href = infoFilename(parentIssue.fields.issuetype?.name);
+    parentInfo = `\n**Parent:** [${parent.key} - ${parentIssue.fields.summary}](${isFile ? href : `../${href}`})`;
+  } else if (parent) {
+    // Parent was not exported, so there is nothing to link to.
+    parentInfo = `\n**Parent:** ${parent.key}`;
+  }
 
   let content = `# ${key} - ${summary}
 
@@ -496,6 +520,8 @@ module.exports = {
   generateIssueFiles,
   generateIssueMd,
   generateMarkdown,
+  infoFilename,
+  renderIndex,
   searchIssues,
   fetchAllParentIssues,
 };
