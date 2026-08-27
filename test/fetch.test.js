@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { fetchAllParentIssues } = require('../export-issues.js');
+const { fetchAllParentIssues, fetchIssue } = require('../export-issues.js');
 
 const JIRA = 'https://x.test';
 const FIELDS = 'summary,parent';
@@ -74,4 +74,41 @@ test('a failed parent fetch is skipped, not thrown', async () => {
 
   assert.deepEqual(result.map(i => i.key), ['PRJ-3']);
   assert.equal(page.calls.length, 1);
+});
+
+test('fetchIssue returns the issue body on success', async () => {
+  const issue = { key: 'PRJ-1', fields: {} };
+  const page = fakePage({ 'PRJ-1': issue });
+
+  assert.deepEqual(await fetchIssue(page, JIRA, 'PRJ-1', FIELDS), issue);
+  assert.equal(page.calls[0], `${JIRA}/rest/api/3/issue/PRJ-1?fields=summary%2Cparent`);
+});
+
+test('fetchIssue throws with the HTTP status attached', async () => {
+  const page = fakePage({}); // every lookup 404s
+
+  await assert.rejects(
+    () => fetchIssue(page, JIRA, 'PRJ-1', FIELDS),
+    (error) => {
+      assert.equal(error.status, 404);
+      assert.match(error.message, /Failed to fetch PRJ-1: 404/);
+      return true;
+    },
+  );
+});
+
+test('a non-OK parent is logged as a failed fetch, not an error', async () => {
+  const leaf = { key: 'PRJ-3', fields: { parent: { key: 'PRJ-2' } } };
+  const page = fakePage({});
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(line);
+  try {
+    await fetchAllParentIssues([leaf], page, JIRA, FIELDS);
+  } finally {
+    console.log = original;
+  }
+
+  assert.ok(lines.includes('[-] Failed to fetch PRJ-2: 404'), lines.join('\n'));
+  assert.equal(lines.some(l => l.startsWith('[-] Error fetching')), false);
 });

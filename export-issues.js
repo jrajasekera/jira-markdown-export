@@ -14,7 +14,7 @@ const STATE_FILE = process.env.JIRA_STATE_FILE === undefined
   ? '.jira-session.json'
   : process.env.JIRA_STATE_FILE;
 
-async function exportJiraIssues() {
+async function exportJiraIssues({ issueKey } = {}) {
   const canReuse = Boolean(STATE_FILE) && fs.existsSync(STATE_FILE);
   let browser = await chromium.launch({ headless: canReuse });
   let context = await browser.newContext(canReuse ? { storageState: STATE_FILE } : {});
@@ -68,11 +68,22 @@ async function exportJiraIssues() {
       'parent'
     ].join(',');
 
-    const searchIssuesResult = await searchIssues(page, JIRA_URL, fields);
-    console.log(`[+] Found ${searchIssuesResult.length} assigned issues`);
+    let seedIssues;
+    if (issueKey) {
+      console.log(`[*] Fetching ${issueKey}...`);
+      try {
+        seedIssues = [await fetchIssue(page, JIRA_URL, issueKey, fields)];
+      } catch (error) {
+        const status = error.status ? ` (${error.status})` : '';
+        throw new Error(`Could not fetch ${issueKey}${status} - check the key and that you have access`);
+      }
+    } else {
+      seedIssues = await searchIssues(page, JIRA_URL, fields);
+      console.log(`[+] Found ${seedIssues.length} assigned issues`);
+    }
 
     // 3. Fetch all parent issues recursively
-    const allIssues = await fetchAllParentIssues(searchIssuesResult, page, JIRA_URL, fields);
+    const allIssues = await fetchAllParentIssues(seedIssues, page, JIRA_URL, fields);
     console.log(`[+] Total issues with parents: ${allIssues.length}`);
 
     // 4. Generate markdown
@@ -536,6 +547,44 @@ function processNode(node) {
   }
 }
 
+// Turn a user-supplied issue reference into a Jira issue key, or null if it is not one.
+// Accepts a bare key (`abc-123`) or a Jira URL carrying the key in `/browse/KEY`, or in a
+// `selectedIssue` / `issueKey` query parameter. The key shape is deliberately permissive:
+// it is a sanity check, not Jira validation - the API is the authority on whether a
+// well-formed key exists.
+const ISSUE_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
+
+function parseIssueRef(input) {
+  if (typeof input !== 'string') return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  if (ISSUE_KEY_RE.test(trimmed)) return trimmed.toUpperCase();
+
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch (error) {
+    return null;
+  }
+
+  const candidates = [
+    url.searchParams.get('selectedIssue'),
+    url.searchParams.get('issueKey'),
+  ];
+
+  // .../browse/KEY -- take the segment right after `browse`.
+  const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  const browseIndex = segments.indexOf('browse');
+  if (browseIndex !== -1) candidates.push(segments[browseIndex + 1]);
+
+  for (const candidate of candidates) {
+    if (candidate && ISSUE_KEY_RE.test(candidate)) return candidate.toUpperCase();
+  }
+
+  return null;
+}
+
 async function searchIssues(page, jiraUrl, fieldsString, jql = JQL) {
   const issues = [];
   let nextPageToken;
@@ -574,6 +623,29 @@ async function searchIssues(page, jiraUrl, fieldsString, jql = JQL) {
   return issues;
 }
 
+// Fetch one issue by key. Throws on a non-OK response, with the HTTP status attached
+// as `error.status` so callers can distinguish an API refusal from a network failure.
+async function fetchIssue(page, jiraUrl, key, fieldsString) {
+  const params = new URLSearchParams({ fields: fieldsString });
+  const url = `${jiraUrl}/rest/api/3/issue/${encodeURIComponent(key)}?${params.toString()}`;
+  const response = await page.request.get(
+    url,
+    {
+      headers: {
+        'Accept': 'application/json',
+      }
+    }
+  );
+
+  if (!response.ok()) {
+    const error = new Error(`Failed to fetch ${key}: ${response.status()}`);
+    error.status = response.status();
+    throw error;
+  }
+
+  return response.json();
+}
+
 async function fetchAllParentIssues(issues, page, jiraUrl, fieldsString) {
   const processedKeys = new Set();
   const allIssuesMap = new Map();
@@ -596,28 +668,18 @@ async function fetchAllParentIssues(issues, page, jiraUrl, fieldsString) {
       console.log(`[*] Fetching parent: ${parentKey}`);
 
       try {
-        const parentParams = new URLSearchParams({ fields: fieldsString });
-        const parentUrl = `${jiraUrl}/rest/api/3/issue/${encodeURIComponent(parentKey)}?${parentParams.toString()}`;
-        const parentResponse = await page.request.get(
-          parentUrl,
-          {
-            headers: {
-              'Accept': 'application/json',
-            }
-          }
-        );
-
-        if (parentResponse.ok()) {
-          const parentIssue = await parentResponse.json();
-          processedKeys.add(parentKey);
-          allIssuesMap.set(parentKey, parentIssue);
-          queue.push(parentIssue);
-          console.log(`[+] Fetched: ${parentKey}`);
-        } else {
-          console.log(`[-] Failed to fetch ${parentKey}: ${parentResponse.status()}`);
-        }
+        const parentIssue = await fetchIssue(page, jiraUrl, parentKey, fieldsString);
+        processedKeys.add(parentKey);
+        allIssuesMap.set(parentKey, parentIssue);
+        queue.push(parentIssue);
+        console.log(`[+] Fetched: ${parentKey}`);
       } catch (error) {
-        console.log(`[-] Error fetching ${parentKey}: ${error.message}`);
+        // A parent we cannot reach is not fatal: the child is exported at top level.
+        if (error.status) {
+          console.log(`[-] Failed to fetch ${parentKey}: ${error.status}`);
+        } else {
+          console.log(`[-] Error fetching ${parentKey}: ${error.message}`);
+        }
       }
     }
   }
@@ -670,7 +732,9 @@ module.exports = {
   generateMarkdown,
   infoFilename,
   renderIndex,
+  parseIssueRef,
   searchIssues,
+  fetchIssue,
   fetchAllParentIssues,
   hasValidSession,
 };
@@ -678,5 +742,21 @@ module.exports = {
 // Run the export only when invoked directly (`node export-issues.js`),
 // not when required by tests.
 if (require.main === module) {
-  exportJiraIssues();
+  const args = process.argv.slice(2);
+  const usage = 'Usage: node export-issues.js [ISSUE-KEY | issue URL]';
+
+  if (args.length > 1) {
+    console.error(`[-] Expected at most one issue key or URL.\n${usage}`);
+    process.exitCode = 1;
+  } else if (args.length === 1) {
+    const issueKey = parseIssueRef(args[0]);
+    if (issueKey) {
+      exportJiraIssues({ issueKey });
+    } else {
+      console.error(`[-] Not a Jira issue key or URL: ${args[0]}\n${usage}`);
+      process.exitCode = 1;
+    }
+  } else {
+    exportJiraIssues();
+  }
 }

@@ -51,6 +51,26 @@ npm run export
 4. The script will fetch all your assigned issues and generate the Markdown files
 5. Check the `exported-issues/` folder for the results
 
+### Export a single issue
+
+Pass an issue key or a Jira URL to export just that card and its parent chain
+(Epic → Story → Task), skipping the JQL search entirely:
+
+```bash
+npm run export -- ABC-123
+npm run export -- "https://your-instance.atlassian.net/browse/ABC-123"
+```
+
+Board and backlog URLs work too, as long as they carry the key in a
+`selectedIssue` or `issueKey` query parameter. The `--` is required so npm
+passes the argument through to the script; `node export-issues.js ABC-123`
+works without it.
+
+Sub-tasks and other children of the named card are *not* fetched — only the
+card itself and its ancestors. As with a full export, a successful run replaces
+the contents of `OUTPUT_DIR`; a bad key or a failed login leaves the previous
+export untouched.
+
 ### Reusing your login
 
 After a successful login the tool saves the browser session to
@@ -87,16 +107,16 @@ Each folder is named with the issue key and a sanitized summary, e.g., `ASDF1234
 
 ### Customize JQL Query
 
-Edit `export-issues.js` line 46 to change what issues are exported:
+Set `JIRA_JQL` in `.env` to change what issues are exported. It defaults to
+`assignee = currentUser()`.
 
-```javascript
-// Currently: assignee=currentUser()
-// Options:
-// - reporter=currentUser()          # Issues you created
-// - assignee=currentUser()          # Issues assigned to you
-// - assignee=currentUser() AND status!=Done  # Active issues only
-// - project=MYPROJECT               # Specific project
+```bash
+# JIRA_JQL=reporter = currentUser()                        # Issues you created
+# JIRA_JQL=assignee = currentUser() AND status != Done     # Active issues only
+# JIRA_JQL=project = MYPROJECT                             # Specific project
 ```
+
+The JQL is ignored when you pass a single issue key or URL on the command line.
 
 ### Add Custom Fields
 
@@ -137,7 +157,7 @@ This project demonstrates several Playwright features:
 
 ## Requirements
 
-- Node.js 16+
+- Node.js 20+
 - Jira Cloud instance with REST API access
 - OAuth/SSO authentication configured in Jira
 
