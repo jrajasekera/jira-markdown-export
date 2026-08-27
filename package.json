@@ -1,15 +1,19 @@
 {
   "name": "jira-markdown-export",
   "version": "1.0.0",
-  "main": "index.js",
+  "private": true,
+  "description": "Export Jira Cloud issues to a hierarchical Markdown tree via an authenticated Playwright session",
+  "main": "export-issues.js",
   "scripts": {
     "export": "node export-issues.js",
     "test": "node --test"
   },
-  "keywords": [],
+  "keywords": ["jira", "markdown", "export", "playwright"],
   "author": "",
-  "license": "ISC",
-  "description": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "dotenv": "^17.2.3",
     "playwright": "^1.56.1"
