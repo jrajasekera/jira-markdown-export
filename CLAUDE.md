@@ -5,32 +5,83 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm install && npx playwright install   # setup
-cp .env.example .env                    # set JIRA_URL, OUTPUT_DIR
-npm run export                          # run the export (node export-issues.js)
+npm install
+npx playwright install
+cp .env.example .env
+npm test
+npm run export
+npm run export -- ABC-123
 ```
 
-There is no build, lint, or test setup — `npm test` is the stub that exits 1.
+Node.js 20 or newer is required. Set `JIRA_URL` and, optionally, `OUTPUT_DIR`
+in `.env`. The test suite uses Node's built-in test runner; there is no build
+or lint script.
 
-`npm run export` is **interactive**: it launches a headed Chromium, waits for you to log in via SSO/OAuth, and blocks on ENTER in the terminal before doing anything. It cannot be run unattended, so don't invoke it in a way that expects it to terminate on its own.
+An export calls the live Jira API and replaces the contents of `OUTPUT_DIR`.
+Do not run it against a user's Jira instance without approval. With no valid
+saved session it opens headed Chromium and waits for the user to authenticate
+and press Enter; a valid `JIRA_STATE_FILE` permits a headless run. Keep browser
+interaction user-controlled and inspect generated files for live verification.
 
 ## Architecture
 
-Everything lives in the single file `export-issues.js` (~430 lines). The pipeline is:
+The implementation remains in `export-issues.js`; focused tests live under
+`test/`. The pipeline is:
 
-1. **Authenticated fetch** (`exportJiraIssues`) — Playwright launches a real browser so the user can complete SSO; all REST calls then go through `page.request.get()`, which reuses that browser context's cookies. This is the whole reason Playwright is a dependency; there is no API token auth. Two endpoints are used: `/rest/api/3/search/jql` (JQL is hardcoded to `assignee=currentUser()`, `maxResults=50`) and `/rest/api/3/issue/{key}`.
-2. **Hierarchy completion** (`fetchAllParentIssues`) — BFS up the `fields.parent` chain, fetching ancestors that weren't in the search results, so every issue has a full Epic → Story → Task chain even when only the leaf was assigned to the user.
-3. **Layout** (`generateMarkdown` → `generatePath` → `generateIssueFiles`) — each issue's full parent chain becomes a nested directory path. Non-leaf issues become a folder `KEY-sanitized-summary/` containing a `_<issuetype>.md` info file; only `Sub-task` issues become plain `.md` files. `generateIssueFiles` recurses into children found by scanning the map for matching `fields.parent.key`, so it is called once per root and walks the whole tree.
-4. **ADF → Markdown** (`descriptionToMd` and the `process*` helpers) — a hand-rolled recursive converter for Atlassian Document Format. `descriptionToMd` handles block nodes (paragraph, heading, lists, codeBlock, blockquote); `processNode` handles inline nodes and marks (strong, em, code, strike, link). Unhandled node types silently render as empty strings, so missing content in output usually means a new ADF node type needs a `case` here.
+1. **Authentication** (`exportJiraIssues`) — reuse a valid Playwright
+   storage-state file when possible, otherwise launch headed Chromium for
+   interactive SSO/OAuth. REST calls use the authenticated browser context.
+2. **Issue discovery** — with no argument, `searchIssues` pages through
+   `/rest/api/3/search/jql` using `JIRA_JQL`. With an issue key or supported
+   Jira URL, `fetchIssue` fetches only that issue as the seed.
+3. **Hierarchy completion** (`fetchAllParentIssues`) — walk
+   `fields.parent` breadth-first and fetch missing ancestors. Single-issue mode
+   does not fetch children of the selected issue.
+4. **Layout** (`generateMarkdown` → `generatePath` →
+   `generateIssueFiles`) — write `index.md` and the nested issue tree. Subtasks
+   are leaf files; other types are directories with `_<issuetype>.md` files.
+5. **Attachments** (`downloadAttachments`) — when enabled, download issue
+   attachments after Markdown generation and rewrite matching ADF placeholders.
+6. **ADF → Markdown** (`descriptionToMd` and the `process*` helpers) —
+   recursively convert supported Atlassian Document Format blocks, inline
+   nodes, and marks.
 
 ## Conventions and gotchas
 
-- Config knobs are edited in source, not passed as flags: the JQL query and the `fields` array are literals near the top of `exportJiraIssues`. Adding a Jira field means adding it to that array *and* rendering it in `generateIssueMd`.
+- Environment configuration includes `JIRA_URL`, `OUTPUT_DIR`, `JIRA_JQL`,
+  `JIRA_STATE_FILE`, `JIRA_DOWNLOAD_ATTACHMENTS`, and
+  `JIRA_MAX_ATTACHMENT_MB`. The exported Jira field list remains in source;
+  adding a field means updating that list and `generateIssueMd`.
 - `allIssuesMap` is a `Map` inside `fetchAllParentIssues` but a plain object everywhere downstream (`generateMarkdown` rebuilds it). Keep the object form when touching `generatePath` / `generateIssueFiles`, which index it with `[key]`.
-- Errors in `exportJiraIssues` are caught and logged and the process exits 1. The output directory is cleared and recreated on every run (`prepareOutputDir`, which refuses `/`, `$HOME`, cwd, and the repo root). Per-parent fetch failures are logged and skipped rather than aborting the run.
-- `exported-issues/` and `.env` are gitignored; the export is a throwaway artifact.
+- `fields.issuetype.subtask` determines whether an issue is a leaf file; the
+  type name is only a fallback. Keep generated paths and links on the shared
+  helpers because tests verify that relative links resolve.
+- Unknown block-level ADF nodes produce a visible marker, while unknown inline
+  nodes render as empty strings. Some container children remain unsupported;
+  extend `descriptionToMd` and `processNode` as appropriate.
+- Errors in `exportJiraIssues` set exit code 1. `prepareOutputDir` replaces the
+  export directory but refuses `/`, `$HOME`, cwd, and the repo root. Invalid CLI
+  input is rejected before output is touched. Missing parents produce top-level
+  orphan subtrees instead of aborting the export.
+- Attachment downloads are opt-in, size-limited, and best-effort. Unmatched
+  media placeholders remain visible, and successfully downloaded files are
+  still listed in the issue Markdown.
+- `.env`, `.jira-session.json`, `exported-issues/`, and `output/` are local
+  artifacts. Treat storage-state files as credentials; never commit Jira
+  sessions, credentials, or exported issue data.
 
+## Verification
 
+```bash
+npm test
+node --check export-issues.js
+git diff --check
+```
+
+For live Jira verification, state the Jira instance, query or issue scope,
+attachment setting, and output target before running. Keep login interaction
+user-controlled and inspect the generated tree, links, content, and attachments
+instead of treating a zero exit status as proof.
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
