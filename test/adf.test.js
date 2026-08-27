@@ -88,12 +88,8 @@ test('emoji renders its shortName', () => {
 });
 
 test('blocks are joined with a blank line and empty blocks are dropped', () => {
-  const md = descriptionToMd([para(text('x')), { type: 'rule' }, para(text('y'))]);
+  const md = descriptionToMd([para(text('x')), { type: 'bulletList' }, para(text('y'))]);
   assert.equal(md, 'x\n\ny');
-});
-
-test('unknown block type renders as empty string', () => {
-  assert.equal(descriptionToMd([{ type: 'table' }]), '');
 });
 
 test('unknown inline node renders as empty string', () => {
@@ -147,8 +143,7 @@ test('paragraph mixes plain text and a linked text node', () => {
   assert.equal(md, 'see [docs](https://e.com)');
 });
 
-// characterization: fixed in plan 006 (nested lists inside a listItem are dropped)
-test('nested list inside a list item is currently dropped', () => {
+test('nested bulletList inside a list item is indented', () => {
   const md = descriptionToMd([{
     type: 'bulletList',
     content: [
@@ -158,5 +153,137 @@ test('nested list inside a list item is currently dropped', () => {
       ),
     ],
   }]);
-  assert.equal(md, '- outer\n');
+  assert.equal(md, '- outer\n  - inner');
+});
+
+test('codeBlock inside a list item is indented', () => {
+  const md = descriptionToMd([{
+    type: 'bulletList',
+    content: [
+      listItem(
+        para(text('step')),
+        { type: 'codeBlock', content: [text('echo hi')] }
+      ),
+    ],
+  }]);
+  assert.equal(md, '- step\n  ```\n  echo hi\n  ```');
+});
+
+test('rule renders a horizontal rule', () => {
+  assert.equal(descriptionToMd([{ type: 'rule' }]), '---');
+});
+
+test('panel renders a labelled blockquote', () => {
+  const md = descriptionToMd([{
+    type: 'panel',
+    attrs: { panelType: 'warning' },
+    content: [para(text('careful'))],
+  }]);
+  assert.equal(md, '> **Warning:**\n> careful');
+});
+
+test('panel with an unknown panelType falls back to Note', () => {
+  const md = descriptionToMd([{
+    type: 'panel',
+    attrs: { panelType: 'mystery' },
+    content: [para(text('hmm'))],
+  }]);
+  assert.equal(md, '> **Note:**\n> hmm');
+});
+
+test('taskList renders GFM checkboxes', () => {
+  const md = descriptionToMd([{
+    type: 'taskList',
+    attrs: { localId: 'a' },
+    content: [
+      { type: 'taskItem', attrs: { localId: 'b', state: 'TODO' }, content: [text('write')] },
+      { type: 'taskItem', attrs: { localId: 'c', state: 'DONE' }, content: [text('test')] },
+    ],
+  }]);
+  assert.equal(md, '- [ ] write\n- [x] test');
+});
+
+test('expand renders a details block', () => {
+  const md = descriptionToMd([{
+    type: 'expand',
+    attrs: { title: 'More' },
+    content: [para(text('hidden'))],
+  }]);
+  assert.equal(md, '<details>\n<summary>More</summary>\n\nhidden\n\n</details>');
+});
+
+test('nestedExpand without a title uses the default summary', () => {
+  const md = descriptionToMd([{
+    type: 'nestedExpand',
+    content: [para(text('hidden'))],
+  }]);
+  assert.equal(md, '<details>\n<summary>Details</summary>\n\nhidden\n\n</details>');
+});
+
+test('table renders a GFM table and escapes pipes', () => {
+  const header = t => ({ type: 'tableHeader', attrs: {}, content: [para(text(t))] });
+  const cell = t => ({ type: 'tableCell', attrs: {}, content: [para(text(t))] });
+  const md = descriptionToMd([{
+    type: 'table',
+    attrs: { isNumberColumnEnabled: false, layout: 'default' },
+    content: [
+      { type: 'tableRow', content: [header('Name'), header('Value')] },
+      { type: 'tableRow', content: [cell('a|b'), cell('2')] },
+    ],
+  }]);
+  assert.equal(md, '| Name | Value |\n| --- | --- |\n| a\\|b | 2 |');
+});
+
+test('table pads short rows to the widest row', () => {
+  const cell = t => ({ type: 'tableCell', attrs: {}, content: [para(text(t))] });
+  const md = descriptionToMd([{
+    type: 'table',
+    content: [
+      { type: 'tableRow', content: [cell('a')] },
+      { type: 'tableRow', content: [cell('b'), cell('c')] },
+    ],
+  }]);
+  assert.equal(md, '| a |  |\n| --- | --- |\n| b | c |');
+});
+
+test('mediaSingle renders an attachment placeholder', () => {
+  const md = descriptionToMd([{
+    type: 'mediaSingle',
+    attrs: { layout: 'center' },
+    content: [{ type: 'media', attrs: { id: 'abc-123', type: 'file', collection: 'x' } }],
+  }]);
+  assert.equal(md, '![attachment](attachment:abc-123)');
+});
+
+test('external media renders its URL', () => {
+  const md = descriptionToMd([{
+    type: 'mediaGroup',
+    content: [{ type: 'media', attrs: { type: 'external', url: 'https://e.com/i.png' } }],
+  }]);
+  assert.equal(md, '![image](https://e.com/i.png)');
+});
+
+test('date renders an ISO day', () => {
+  assert.equal(processNode({ type: 'date', attrs: { timestamp: '1700000000000' } }), '2023-11-14');
+});
+
+test('status renders its text in brackets', () => {
+  assert.equal(processNode({ type: 'status', attrs: { text: 'In Progress' } }), '[In Progress]');
+});
+
+test('underline mark renders an HTML tag', () => {
+  assert.equal(processNode(text('u', [{ type: 'underline' }])), '<u>u</u>');
+});
+
+test('subsup mark renders sup and sub', () => {
+  assert.equal(processNode(text('2', [{ type: 'subsup', attrs: { type: 'sup' } }])), '<sup>2</sup>');
+  assert.equal(processNode(text('2', [{ type: 'subsup', attrs: { type: 'sub' } }])), '<sub>2</sub>');
+});
+
+test('textColor mark leaves the text unchanged', () => {
+  assert.equal(processNode(text('x', [{ type: 'textColor', attrs: { color: '#ff0000' } }])), 'x');
+});
+
+test('unknown block type renders a visible marker', () => {
+  assert.equal(descriptionToMd([{ type: 'foo' }]), '<!-- unsupported ADF block: foo -->');
 });
