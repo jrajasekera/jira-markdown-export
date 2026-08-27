@@ -51,6 +51,17 @@ npm run export
 4. The script will fetch all your assigned issues and generate the Markdown files
 5. Check the `exported-issues/` folder for the results
 
+### Reusing your login
+
+After a successful login the tool saves the browser session to
+`.jira-session.json` (gitignored). On later runs it checks that session first;
+if it is still valid the export runs headless with no prompt. If it has
+expired you are asked to log in again and the file is refreshed.
+
+- This file is a credential — treat it like a password and never commit it.
+- To always log in interactively, set `JIRA_STATE_FILE=` (empty) in `.env`.
+- If the tool errors while loading the file, delete it and rerun.
+
 ## Output Structure
 
 ```

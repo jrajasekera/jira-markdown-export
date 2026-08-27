@@ -7,6 +7,9 @@ npm-debug.log
 .env.local
 .env.*.local
 
+# Saved browser session (credential — never commit)
+.jira-session.json
+
 # Output directories
 exported-issues/
 output/

@@ -9,20 +9,44 @@ const JIRA_URL = process.env.JIRA_URL || 'https://your-instance.atlassian.net';
 const OUTPUT_DIR = process.env.OUTPUT_DIR || './exported-issues';
 const JQL = process.env.JIRA_JQL || 'assignee = currentUser()';
 
+// Path to Playwright storageState JSON. Set JIRA_STATE_FILE= (empty) to disable.
+const STATE_FILE = process.env.JIRA_STATE_FILE === undefined
+  ? '.jira-session.json'
+  : process.env.JIRA_STATE_FILE;
+
 async function exportJiraIssues() {
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  const canReuse = Boolean(STATE_FILE) && fs.existsSync(STATE_FILE);
+  let browser = await chromium.launch({ headless: canReuse });
+  let context = await browser.newContext(canReuse ? { storageState: STATE_FILE } : {});
+  let page = await context.newPage();
 
   try {
     console.log('[*] Connecting to Jira...');
 
-    // 1. Open Jira (uses existing SSO session)
-    await page.goto(JIRA_URL);
+    const me = canReuse ? await hasValidSession(page, JIRA_URL) : null;
+    if (me) {
+      console.log(`[+] Reusing saved session for ${me.displayName}`);
+    } else {
+      if (canReuse) {
+        console.log('[-] Saved session is no longer valid; logging in interactively');
+        await browser.close();
+        browser = await chromium.launch({ headless: false });
+        context = await browser.newContext();
+        page = await context.newPage();
+      }
 
-    // Wait for login to complete - interactive mode
-    console.log('[!] Browser window opened. Log in to Jira, then press ENTER here...');
-    await waitForUserInput();
+      // 1. Open Jira (uses existing SSO session)
+      await page.goto(JIRA_URL);
+
+      // Wait for login to complete - interactive mode
+      console.log('[!] Browser window opened. Log in to Jira, then press ENTER here...');
+      await waitForUserInput();
+
+      if (STATE_FILE) {
+        await context.storageState({ path: STATE_FILE });
+        console.log(`[+] Saved session to ${STATE_FILE}`);
+      }
+    }
 
     console.log('[*] Fetching issues...');
 
@@ -601,6 +625,22 @@ async function fetchAllParentIssues(issues, page, jiraUrl, fieldsString) {
   return Array.from(allIssuesMap.values());
 }
 
+// Probe whether the current browser context is still authenticated with Jira.
+// Returns the `myself` payload when it is, otherwise null. Never throws: an
+// expired session is the normal fallback path, not an error.
+async function hasValidSession(page, jiraUrl) {
+  try {
+    const res = await page.request.get(`${jiraUrl}/rest/api/3/myself`, {
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!res.ok()) return null;
+    const me = await res.json();
+    return me && me.accountId ? me : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 function waitForUserInput() {
   return new Promise((resolve) => {
     const rl = readline.createInterface({
@@ -632,6 +672,7 @@ module.exports = {
   renderIndex,
   searchIssues,
   fetchAllParentIssues,
+  hasValidSession,
 };
 
 // Run the export only when invoked directly (`node export-issues.js`),
