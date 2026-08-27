@@ -56,6 +56,7 @@ async function exportJiraIssues() {
 
   } catch (error) {
     console.error('[-] Error:', error);
+    process.exitCode = 1;
   } finally {
     await browser.close();
   }
@@ -390,7 +391,10 @@ async function searchIssues(page, jiraUrl, fieldsString) {
     }
 
     const data = await response.json();
-    issues.push(...(data.issues || []));
+    if (!Array.isArray(data.issues)) {
+      throw new Error(`Unexpected search response: ${JSON.stringify(data).slice(0, 200)}`);
+    }
+    issues.push(...data.issues);
     console.log(`[*] Fetched ${issues.length} issues so far`);
 
     nextPageToken = data.isLast ? undefined : data.nextPageToken;

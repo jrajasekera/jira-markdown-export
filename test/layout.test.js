@@ -206,6 +206,15 @@ test('searchIssues throws on a non-OK response', async () => {
   );
 });
 
+test('searchIssues throws when the response has no issues array', async () => {
+  const page = fakeSearchPage(() => ok({ errorMessages: ['bad jql'] }));
+
+  await assert.rejects(
+    () => searchIssues(page, 'https://x.atlassian.net', 'summary'),
+    /Unexpected search response/
+  );
+});
+
 // --- orphaned issues (parent could not be fetched) ---
 
 test('generateIssueFiles exports an orphan subtree without its missing parent', () => {
