@@ -6,6 +6,7 @@ const path = require('path');
 const {
   sanitizeFilename,
   sanitizeDir,
+  isSubtask,
   generatePath,
   generateIssueFiles,
   generateIssueMd,
@@ -19,7 +20,7 @@ const issue = (key, typeName, summary, parentKey) => ({
   key,
   fields: {
     summary,
-    issuetype: { name: typeName },
+    issuetype: { name: typeName, subtask: typeName.toLowerCase() === 'sub-task' },
     status: { name: 'To Do' },
     priority: { name: 'Medium' },
     assignee: { displayName: 'Ada' },
@@ -58,13 +59,47 @@ test('generatePath walks the parent chain root-first', () => {
   assert.equal(storyPath.isFile, false);
 });
 
-// characterization: fixed in plan 004 (subtask detection uses the name, not issuetype.subtask)
-test('issuetype named "Subtask" with subtask:true is currently not treated as a file', () => {
+test('issuetype named "Subtask" with subtask:true is treated as a file', () => {
   const odd = {
     key: 'PRJ-9',
     fields: { summary: 'Odd', issuetype: { name: 'Subtask', subtask: true } },
   };
-  assert.equal(generatePath(odd, { 'PRJ-9': odd }).isFile, false);
+  assert.equal(generatePath(odd, { 'PRJ-9': odd }).isFile, true);
+});
+
+test('isSubtask prefers the issuetype.subtask flag over the type name', () => {
+  const withType = (issuetype) => ({ key: 'PRJ-9', fields: { summary: 'x', issuetype } });
+
+  assert.equal(isSubtask(withType({ name: 'Sub-task', subtask: true })), true);
+  assert.equal(isSubtask(withType({ name: 'Subtask', subtask: true })), true);
+  assert.equal(isSubtask(withType({ name: 'Bug fix subtask', subtask: true })), true);
+  assert.equal(isSubtask(withType({ name: 'Task', subtask: false })), false);
+  // fallback when the flag is absent
+  assert.equal(isSubtask(withType({ name: 'Sub-task' })), true);
+  assert.equal(isSubtask(withType({ name: 'Subtask' })), false);
+  assert.equal(isSubtask(withType(undefined)), false);
+});
+
+test('generateIssueFiles writes a flag-only subtask as a leaf file', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-export-'));
+  try {
+    const parent = issue('PRJ-10', 'Task', 'Parent task');
+    const child = {
+      key: 'PRJ-11',
+      fields: {
+        ...issue('PRJ-11', 'Task', 'Child bit', 'PRJ-10').fields,
+        issuetype: { name: 'Subtask', subtask: true },
+      },
+    };
+    const flagMap = { 'PRJ-10': parent, 'PRJ-11': child };
+
+    generateIssueFiles(parent, generatePath(parent, flagMap), tmpDir, flagMap);
+
+    assert.ok(fs.existsSync(path.join(tmpDir, 'PRJ-10-parent-task/PRJ-11-child-bit.md')));
+    assert.ok(!fs.existsSync(path.join(tmpDir, 'PRJ-10-parent-task/PRJ-11-child-bit')));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('generateIssueFiles lays out folders, info files and subtask files', () => {

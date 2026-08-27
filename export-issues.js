@@ -111,6 +111,15 @@ ${rootIssues.map(issue => {
   fs.writeFileSync(path.join(OUTPUT_DIR, 'index.md'), indexContent);
 }
 
+function isSubtask(issue) {
+  const issuetype = issue.fields.issuetype;
+  if (typeof issuetype?.subtask === 'boolean') {
+    return issuetype.subtask;
+  }
+  // Fallback for payloads that omit the flag
+  return issuetype?.name?.toLowerCase() === 'sub-task';
+}
+
 function generatePath(issue, allIssuesMap) {
   const path = [];
   let current = issue;
@@ -126,7 +135,7 @@ function generatePath(issue, allIssuesMap) {
   }
 
   // Check if the last item (current issue) is a subtask
-  const isFile = issue.fields.issuetype?.name?.toLowerCase() === 'sub-task';
+  const isFile = isSubtask(issue);
 
   return { path, isFile };
 }
@@ -460,6 +469,7 @@ module.exports = {
   processListItem,
   sanitizeFilename,
   sanitizeDir,
+  isSubtask,
   generatePath,
   generateIssueFiles,
   generateIssueMd,
