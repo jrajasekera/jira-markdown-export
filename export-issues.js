@@ -314,24 +314,30 @@ function processNode(node) {
     case 'text':
       let text = node.text || '';
 
-      // Apply marks (bold, italic, code, etc)
-      if (node.marks && node.marks.length > 0) {
-        node.marks.forEach(mark => {
-          switch (mark.type) {
-            case 'strong':
-              text = `**${text}**`;
-              break;
-            case 'em':
-              text = `*${text}*`;
-              break;
-            case 'code':
-              text = `\`${text}\``;
-              break;
-            case 'strike':
-              text = `~~${text}~~`;
-              break;
-          }
-        });
+      // Apply marks (bold, italic, code, etc). Link is applied last so the
+      // link wraps the formatted text: [**bold**](url).
+      const marks = node.marks || [];
+      const linkMark = marks.find(mark => mark.type === 'link');
+
+      marks.forEach(mark => {
+        switch (mark.type) {
+          case 'strong':
+            text = `**${text}**`;
+            break;
+          case 'em':
+            text = `*${text}*`;
+            break;
+          case 'code':
+            text = `\`${text}\``;
+            break;
+          case 'strike':
+            text = `~~${text}~~`;
+            break;
+        }
+      });
+
+      if (linkMark) {
+        text = `[${text}](${linkMark.attrs?.href || ''})`;
       }
 
       return text;
@@ -341,7 +347,7 @@ function processNode(node) {
 
     case 'inlineCard':
       const url = node.attrs?.url || '';
-      return `[Link](${url})`;
+      return `[${url}](${url})`;
 
     case 'mention':
       const name = node.attrs?.text || 'Unknown';

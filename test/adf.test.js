@@ -76,10 +76,10 @@ test('mention prefixes the display text with @', () => {
   assert.equal(processNode({ type: 'mention', attrs: { text: 'Jane' } }), '@Jane');
 });
 
-test('inlineCard renders a Link label', () => {
+test('inlineCard renders the URL as its own label', () => {
   assert.equal(
     processNode({ type: 'inlineCard', attrs: { url: 'https://example.com' } }),
-    '[Link](https://example.com)'
+    '[https://example.com](https://example.com)'
   );
 });
 
@@ -104,10 +104,47 @@ test('null description renders the placeholder', () => {
   assert.equal(descriptionToMd(null), 'No description');
 });
 
-// characterization: fixed in plan 003 (link marks currently render as plain text)
-test('link mark currently renders as plain text', () => {
+test('link mark renders as a Markdown link', () => {
   const md = descriptionToMd([para(text('site', [{ type: 'link', attrs: { href: 'https://example.com' } }]))]);
-  assert.equal(md, 'site');
+  assert.equal(md, '[site](https://example.com)');
+});
+
+test('link mark on a text node renders as a Markdown link', () => {
+  const node = text('docs', [{ type: 'link', attrs: { href: 'https://e.com' } }]);
+  assert.equal(processNode(node), '[docs](https://e.com)');
+});
+
+test('link wraps bold text when strong comes first', () => {
+  const node = text('docs', [
+    { type: 'strong' },
+    { type: 'link', attrs: { href: 'https://e.com' } },
+  ]);
+  assert.equal(processNode(node), '[**docs**](https://e.com)');
+});
+
+test('link wraps bold text when link comes first', () => {
+  const node = text('docs', [
+    { type: 'link', attrs: { href: 'https://e.com' } },
+    { type: 'strong' },
+  ]);
+  assert.equal(processNode(node), '[**docs**](https://e.com)');
+});
+
+test('link mark without attrs renders an empty target', () => {
+  assert.equal(processNode(text('docs', [{ type: 'link' }])), '[docs]()');
+});
+
+test('inlineCard renders the URL as the link text', () => {
+  const node = { type: 'inlineCard', attrs: { url: 'https://e.com/x' } };
+  assert.equal(processNode(node), '[https://e.com/x](https://e.com/x)');
+});
+
+test('paragraph mixes plain text and a linked text node', () => {
+  const md = descriptionToMd([para(
+    text('see '),
+    text('docs', [{ type: 'link', attrs: { href: 'https://e.com' } }])
+  )]);
+  assert.equal(md, 'see [docs](https://e.com)');
 });
 
 // characterization: fixed in plan 006 (nested lists inside a listItem are dropped)
