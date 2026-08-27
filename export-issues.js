@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const JIRA_URL = process.env.JIRA_URL || 'https://your-instance.atlassian.net';
 const OUTPUT_DIR = process.env.OUTPUT_DIR || './exported-issues';
+const JQL = process.env.JIRA_JQL || 'assignee = currentUser()';
 
 async function exportJiraIssues() {
   const browser = await chromium.launch({ headless: false });
@@ -505,14 +506,20 @@ function processNode(node) {
   }
 }
 
-async function searchIssues(page, jiraUrl, fieldsString) {
+async function searchIssues(page, jiraUrl, fieldsString, jql = JQL) {
   const issues = [];
   let nextPageToken;
 
   do {
-    const tokenParam = nextPageToken ? `&nextPageToken=${nextPageToken}` : '';
+    const params = new URLSearchParams({
+      jql,
+      maxResults: String(100),
+      fields: fieldsString,
+    });
+    if (nextPageToken) params.set('nextPageToken', nextPageToken);
+    const url = `${jiraUrl}/rest/api/3/search/jql?${params.toString()}`;
     const response = await page.request.get(
-      `${jiraUrl}/rest/api/3/search/jql?jql=assignee=currentUser()&maxResults=100&fields=${fieldsString}${tokenParam}`,
+      url,
       {
         headers: {
           'Accept': 'application/json',
@@ -559,8 +566,10 @@ async function fetchAllParentIssues(issues, page, jiraUrl, fieldsString) {
       console.log(`[*] Fetching parent: ${parentKey}`);
 
       try {
+        const parentParams = new URLSearchParams({ fields: fieldsString });
+        const parentUrl = `${jiraUrl}/rest/api/3/issue/${encodeURIComponent(parentKey)}?${parentParams.toString()}`;
         const parentResponse = await page.request.get(
-          `${jiraUrl}/rest/api/3/issue/${parentKey}?fields=${fieldsString}`,
+          parentUrl,
           {
             headers: {
               'Accept': 'application/json',

@@ -241,6 +241,35 @@ test('searchIssues follows nextPageToken across pages', async () => {
   assert.ok(page.urls[1].includes('nextPageToken=tok1'));
 });
 
+test('searchIssues encodes the default JQL, maxResults, and fields', async () => {
+  const page = fakeSearchPage(() => ok({ issues: [], isLast: true }));
+
+  await searchIssues(page, 'https://x.atlassian.net', 'summary,description');
+
+  const url = page.urls[0];
+  assert.ok(url.includes('/rest/api/3/search/jql?'), url);
+  assert.ok(url.includes('jql=assignee+%3D+currentUser%28%29'), url);
+  assert.ok(url.includes('maxResults='), url);
+  assert.ok(url.includes('fields=summary%2Cdescription'), url);
+});
+
+test('searchIssues encodes a custom JQL passed as an argument', async () => {
+  const page = fakeSearchPage(() => ok({ issues: [], isLast: true }));
+
+  await searchIssues(
+    page,
+    'https://x.atlassian.net',
+    'summary',
+    'project = "My Proj" AND updated >= -7d'
+  );
+
+  const url = page.urls[0];
+  assert.ok(
+    url.includes('jql=project+%3D+%22My+Proj%22+AND+updated+%3E%3D+-7d'),
+    url
+  );
+});
+
 test('searchIssues stops after a single last page', async () => {
   const page = fakeSearchPage(() => ok({ issues: [{ key: 'A-1', fields: { summary: 'a' } }], isLast: true }));
 

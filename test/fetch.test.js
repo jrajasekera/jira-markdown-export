@@ -38,8 +38,18 @@ test('walks the parent chain to the root', async () => {
   assert.equal(page.calls.length, 2);
   for (const url of page.calls) {
     assert.ok(url.startsWith(`${JIRA}/rest/api/3/issue/`), url);
-    assert.ok(url.includes(`?fields=${FIELDS}`), url);
+    assert.ok(url.includes('?fields=summary%2Cparent'), url);
   }
+});
+
+test('the parent key and fields are URL-encoded in the request', async () => {
+  const leaf = { key: 'ABC-13', fields: { parent: { key: 'ABC-12' } } };
+  const page = fakePage({ 'ABC-12': { key: 'ABC-12', fields: {} } });
+
+  await fetchAllParentIssues([leaf], page, JIRA, FIELDS);
+
+  assert.equal(page.calls.length, 1);
+  assert.ok(page.calls[0].includes('/rest/api/3/issue/ABC-12?fields='), page.calls[0]);
 });
 
 test('a shared parent is fetched only once', async () => {
