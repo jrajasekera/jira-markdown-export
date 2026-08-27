@@ -169,6 +169,30 @@ test('codeBlock inside a list item is indented', () => {
   assert.equal(md, '- step\n  ```\n  echo hi\n  ```');
 });
 
+test('nested content in an ordered list item matches the marker width', () => {
+  const item = () => listItem(
+    para(text('outer')),
+    { type: 'bulletList', content: [listItem(para(text('inner')))] }
+  );
+  const md = descriptionToMd([{ type: 'orderedList', content: [item()] }]);
+  // `1. ` is three columns wide, so two spaces would break the item.
+  assert.equal(md, '1. outer\n   - inner');
+
+  const wide = descriptionToMd([{
+    type: 'orderedList',
+    content: Array.from({ length: 10 }, item),
+  }]);
+  assert.equal(wide.split('\n').slice(-2).join('\n'), '10. outer\n    - inner');
+});
+
+test('a list item starting with a code block keeps the fence inside the item', () => {
+  const md = descriptionToMd([{
+    type: 'bulletList',
+    content: [listItem({ type: 'codeBlock', content: [text('echo hi')] })],
+  }]);
+  assert.equal(md, '- ```\n  echo hi\n  ```');
+});
+
 test('rule renders a horizontal rule', () => {
   assert.equal(descriptionToMd([{ type: 'rule' }]), '---');
 });

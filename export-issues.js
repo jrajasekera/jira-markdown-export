@@ -313,7 +313,7 @@ function descriptionToMd(content) {
 
         case 'orderedList':
           return block.content
-            ?.map((item, i) => `${i + 1}. ${processListItem(item)}`)
+            ?.map((item, i) => `${i + 1}. ${processListItem(item, ' '.repeat(String(i + 1).length + 2))}`)
             .join('\n') || '';
 
         case 'codeBlock':
@@ -409,13 +409,19 @@ function indentBlock(text, prefix = '  ') {
   return text.split('\n').map(line => (line ? prefix + line : line)).join('\n');
 }
 
-function processListItem(item) {
+// `prefix` is the indent of the item's content column, which depends on the
+// marker width: two spaces for `- `, more for `10. `.
+function processListItem(item, prefix = '  ') {
   if (item.type !== 'listItem' || !item.content || item.content.length === 0) return '';
 
   const [first, ...rest] = item.content;
-  const head = first?.type === 'paragraph' ? processContent(first.content) : descriptionToMd([first]);
+  const head = first?.type === 'paragraph'
+    ? processContent(first.content)
+    // A non-paragraph first block may be multi-line (a code fence, a table);
+    // every line but the first needs the item indent to stay inside the item.
+    : indentBlock(descriptionToMd([first]), prefix).trimStart();
   if (rest.length === 0) return head;
-  return `${head}\n${indentBlock(descriptionToMd(rest))}`;
+  return `${head}\n${indentBlock(descriptionToMd(rest), prefix)}`;
 }
 
 function processContent(content) {
