@@ -321,6 +321,3 @@ disappearing.
 
 MIT — see the LICENSE file.
 
-## Contributing
-
-Use it :) I'm not gonna update it.
