@@ -52,7 +52,7 @@ class TransientRequestError extends Error {
 class SessionExpiredError extends Error {
   constructor(url, { status, responseUrl } = {}) {
     const detail = status ? ` (HTTP ${status})` : responseUrl ? ` (redirected to ${responseUrl})` : '';
-    super(`Jira session expired or was redirected to login${detail}. Delete or refresh the saved session, then run the export again.`);
+    super(`Jira session expired or was redirected to login${detail}. Run the export with --refresh-session to log in again.`);
     this.name = 'SessionExpiredError';
     this.status = status;
     this.sessionExpired = true;

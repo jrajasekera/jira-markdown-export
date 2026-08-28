@@ -42,9 +42,18 @@ function parseIssueRef(input) {
 function parseExportArgs(args) {
   const issueKeys = [];
   let jql;
+  let refreshSession = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
+
+    if (argument === '--refresh-session') {
+      if (refreshSession) {
+        return { error: 'Specify --refresh-session at most once.' };
+      }
+      refreshSession = true;
+      continue;
+    }
 
     if (argument === '--jql') {
       const value = args[index + 1];
@@ -73,7 +82,26 @@ function parseExportArgs(args) {
   return {
     issueKeys: [...new Set(issueKeys)],
     jql,
+    refreshSession,
   };
+}
+
+function shellQuote(value) {
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+// Reconstruct a copy-pasteable command from the normalized export scope. This
+// deliberately uses the saved issue keys rather than the original URLs: both
+// select the same Jira issues, and keys are easier to read in recovery output.
+function refreshSessionCommand({ issueKeys = [], jql } = {}) {
+  const args = ['npm', 'run', 'export', '--', '--refresh-session'];
+  if (jql !== undefined) {
+    args.push('--jql', jql);
+  } else {
+    args.push(...issueKeys);
+  }
+  return args.map(shellQuote).join(' ');
 }
 
 // The message shown when a single-issue export cannot fetch its seed. A bad key
@@ -91,5 +119,6 @@ function describeIssueFetchError(error, issueKey) {
 module.exports = {
   parseIssueRef,
   parseExportArgs,
+  refreshSessionCommand,
   describeIssueFetchError,
 };

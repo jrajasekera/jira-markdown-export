@@ -155,6 +155,10 @@ After a successful login the browser session is saved to `.jira-session.json`
 (gitignored). Later runs reuse it and run headless with no prompt; when it
 expires you are asked to log in again and the file is refreshed.
 
+- To replace an expired session immediately, run `npm run export -- --refresh-session`
+  (add the same issue keys or `--jql` option as your original export). The
+  exporter opens Jira in a browser, waits for you to log in, and overwrites the
+  saved session after you press Enter.
 - To force an interactive login every time, set `JIRA_STATE_FILE=` (empty) in `.env`.
 - If a run errors while loading the file, delete it and rerun.
 - Treat the file as a credential. It grants access to your Jira account — never
@@ -183,6 +187,7 @@ safe to run at any time. There is no build or lint step.
 |---|---|
 | `npm run export` | Export every issue matching `JIRA_JQL`, plus their ancestors |
 | `npm run export -- <KEY\|URL>` | Export one issue and its ancestors |
+| `npm run export -- --refresh-session [<KEY\|URL>]` | Log in again, replace the saved session, then export |
 | `npm test` | Run the test suite |
 
 An export **replaces the entire contents of `OUTPUT_DIR`**. A bad issue key,

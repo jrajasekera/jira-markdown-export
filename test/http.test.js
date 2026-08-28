@@ -159,7 +159,7 @@ test('fails immediately with session recovery guidance on 401 or 403', async () 
       (error) => error instanceof SessionExpiredError
         && error.sessionExpired === true
         && error.status === status
-        && /Delete or refresh the saved session/.test(error.message)
+        && /--refresh-session/.test(error.message)
     );
     assert.equal(urls.length, 1);
     assert.deepEqual(sleeps, []);

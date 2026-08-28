@@ -15,12 +15,12 @@ const {
   resolveCustomFieldIds,
 } = require('./src/jira-client.js');
 const { generateMarkdown } = require('./src/pipeline.js');
-const { parseExportArgs, describeIssueFetchError } = require('./src/cli.js');
+const { parseExportArgs, refreshSessionCommand, describeIssueFetchError } = require('./src/cli.js');
 const { createJiraClient } = require('./src/http.js');
 
-async function exportJiraIssues({ issueKey, issueKeys, jql } = {}) {
+async function exportJiraIssues({ issueKey, issueKeys, jql, refreshSession = false } = {}) {
   const requestedIssueKeys = [...new Set(issueKeys || (issueKey ? [issueKey] : []))];
-  const canReuse = Boolean(STATE_FILE) && fs.existsSync(STATE_FILE);
+  const canReuse = !refreshSession && Boolean(STATE_FILE) && fs.existsSync(STATE_FILE);
   // Page and client are created together and never separately: every Jira
   // request goes through the client, so a page without its client would silently
   // bypass rate-limit handling.
@@ -35,6 +35,10 @@ async function exportJiraIssues({ issueKey, issueKeys, jql } = {}) {
 
   try {
     console.log('[*] Connecting to Jira...');
+
+    if (refreshSession && STATE_FILE) {
+      console.log(`[*] Refreshing saved Jira session at ${STATE_FILE}`);
+    }
 
     const me = canReuse ? await hasValidSession(client, JIRA_URL) : null;
     if (me) {
@@ -101,7 +105,14 @@ async function exportJiraIssues({ issueKey, issueKeys, jql } = {}) {
 
   } catch (error) {
     if (error.sessionExpired) {
-      console.error('[-] Jira session expired during export. Delete or refresh the saved session, then run the export again.');
+      console.error('[-] Jira session expired during export.');
+      if (STATE_FILE) {
+        console.error(`[*] Saved session: ${STATE_FILE}`);
+        console.error('[*] Run this command to open Jira, log in again, and replace the saved session:');
+        console.error(`    ${refreshSessionCommand({ issueKeys: requestedIssueKeys, jql })}`);
+      } else {
+        console.error('[*] Session saving is disabled. Run the same export again and log in when the browser opens.');
+      }
     } else {
       console.error('[-] Error:', error);
     }
@@ -119,7 +130,7 @@ module.exports = {
 // not when required by tests.
 if (require.main === module) {
   const args = process.argv.slice(2);
-  const usage = 'Usage: node export-issues.js [ISSUE-KEY | issue URL]... | --jql "JQL"';
+  const usage = 'Usage: node export-issues.js [--refresh-session] ([ISSUE-KEY | issue URL]... | --jql "JQL")';
   const parsedArgs = parseExportArgs(args);
 
   if (parsedArgs.error) {

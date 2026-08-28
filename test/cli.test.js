@@ -4,7 +4,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { parseIssueRef, parseExportArgs, describeIssueFetchError } = require('../src/cli.js');
+const {
+  parseIssueRef,
+  parseExportArgs,
+  refreshSessionCommand,
+  describeIssueFetchError,
+} = require('../src/cli.js');
 
 const SCRIPT = path.join(__dirname, '..', 'export-issues.js');
 
@@ -86,6 +91,7 @@ test('multiple references are normalized and de-duplicated', () => {
   ]), {
     issueKeys: ['ABC-1', 'PRJ-2'],
     jql: undefined,
+    refreshSession: false,
   });
 });
 
@@ -93,7 +99,38 @@ test('a JQL export scope is parsed without issue keys', () => {
   assert.deepEqual(parseExportArgs(['--jql', 'project = ABC AND status = Open']), {
     issueKeys: [],
     jql: 'project = ABC AND status = Open',
+    refreshSession: false,
   });
+});
+
+test('--refresh-session preserves an issue-key export scope', () => {
+  assert.deepEqual(parseExportArgs(['--refresh-session', 'abc-1']), {
+    issueKeys: ['ABC-1'],
+    jql: undefined,
+    refreshSession: true,
+  });
+});
+
+test('--refresh-session preserves a JQL export scope', () => {
+  assert.deepEqual(parseExportArgs(['--jql', 'project = ABC', '--refresh-session']), {
+    issueKeys: [],
+    jql: 'project = ABC',
+    refreshSession: true,
+  });
+});
+
+test('refreshSessionCommand produces a copy-pasteable issue command', () => {
+  assert.equal(
+    refreshSessionCommand({ issueKeys: ['ABC-1', 'PRJ-2'] }),
+    'npm run export -- --refresh-session ABC-1 PRJ-2',
+  );
+});
+
+test('refreshSessionCommand safely quotes JQL', () => {
+  assert.equal(
+    refreshSessionCommand({ jql: "project = ABC AND status = 'In Progress'" }),
+    `npm run export -- --refresh-session --jql 'project = ABC AND status = '"'"'In Progress'"'"''`,
+  );
 });
 
 test('a missing --jql value exits 1 without touching the output directory', () => {
