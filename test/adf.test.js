@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { descriptionToMd, processNode } = require('../export-issues.js');
+const { descriptionToMd, processNode } = require('../src/adf.js');
 
 // ADF helper builders keep fixtures short
 const text = (t, marks) => (marks ? { type: 'text', text: t, marks } : { type: 'text', text: t });
@@ -275,6 +275,14 @@ test('mediaSingle renders an attachment placeholder', () => {
     type: 'mediaSingle',
     attrs: { layout: 'center' },
     content: [{ type: 'media', attrs: { id: 'abc-123', type: 'file', collection: 'x' } }],
+  }]);
+  assert.equal(md, '![attachment](attachment:abc-123)');
+});
+
+test('media with an empty alt falls back to the default label', () => {
+  const md = descriptionToMd([{
+    type: 'mediaSingle',
+    content: [{ type: 'media', attrs: { id: 'abc-123', alt: '', type: 'file' } }],
   }]);
   assert.equal(md, '![attachment](attachment:abc-123)');
 });

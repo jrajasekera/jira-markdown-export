@@ -6,7 +6,8 @@ repository.
 ## Project overview
 
 This is a small CommonJS Node.js tool that exports Jira Cloud issues to a
-hierarchical Markdown tree. The implementation lives in `export-issues.js`.
+hierarchical Markdown tree. `export-issues.js` is the entry point; the
+implementation lives in modules under `src/`.
 Playwright launches headed Chromium so the user can complete Jira SSO/OAuth;
 subsequent REST requests reuse that authenticated browser context.
 
@@ -33,7 +34,30 @@ interaction user-controlled and inspect generated files for live verification.
 
 ## Architecture
 
-The export pipeline in `export-issues.js` is:
+`export-issues.js` is the entry point: it owns `exportJiraIssues` and the CLI
+argument block, and nothing else. Every concern lives in a module under `src/`,
+with `test/` organised to match one file per module:
+
+| Module | Owns |
+|---|---|
+| `src/config.js` | dotenv, the `JIRA_*` env constants, `ISSUE_FIELDS` |
+| `src/session.js` | `hasValidSession`, `waitForUserInput` |
+| `src/jira-client.js` | `searchIssues`, `fetchIssue`, `fetchAllParentIssues` |
+| `src/cli.js` | `parseIssueRef` |
+| `src/naming.js` | `sanitizeDir`, `sanitizeFilename`, `infoFilename` |
+| `src/attachments.js` | the `attachment:<key>` placeholder syntax, `downloadAttachments` |
+| `src/adf.js` | `descriptionToMd` and the `process*` helpers |
+| `src/render.js` | `generateIssueMd` |
+| `src/layout.js` | `generatePath`, `generateIssueFiles`, `renderIndex`, `isSubtask` |
+| `src/pipeline.js` | `prepareOutputDir`, `generateMarkdown` |
+
+The dependency graph is acyclic and worth keeping that way:
+`pipeline → {config, layout, attachments}`, `layout → {naming, render}`,
+`render → {adf, naming}`, `adf → attachments → naming`,
+`jira-client → config`. In particular `pipeline` does *not* depend on `render` —
+it reaches Markdown rendering only through `layout`.
+
+The export pipeline is:
 
 1. `exportJiraIssues` reuses a valid Playwright storage-state file when
    possible, otherwise launches headed Chromium for interactive SSO/OAuth.
@@ -54,13 +78,16 @@ The export pipeline in `export-issues.js` is:
 
 ## Conventions and known pitfalls
 
-- Keep changes narrow and preserve the single-file design unless the task
-  specifically calls for restructuring.
+- Keep changes narrow and keep each concern in its own `src/` module. Adding a
+  cross-module helper is usually a sign it belongs in `src/naming.js` or in the
+  module that already owns the contract — do not reintroduce a barrel that
+  re-exports everything from `export-issues.js`.
 - Environment configuration includes `JIRA_URL`, `OUTPUT_DIR`, `JIRA_JQL`,
   `JIRA_STATE_FILE`, `JIRA_DOWNLOAD_ATTACHMENTS`, and
-  `JIRA_MAX_ATTACHMENT_MB`. The exported Jira field list remains in source.
-- When adding an exported Jira field, update both the REST `fields` list and
-  the rendering in `generateIssueMd`.
+  `JIRA_MAX_ATTACHMENT_MB`. The exported Jira field list is `ISSUE_FIELDS` in
+  `src/config.js`.
+- When adding an exported Jira field, update both `ISSUE_FIELDS` in
+  `src/config.js` and the rendering in `generateIssueMd` (`src/render.js`).
 - `fetchAllParentIssues` uses a `Map`, while downstream path and generation
   functions use a plain object indexed as `allIssuesMap[key]`. Preserve the
   expected representation at each boundary.
@@ -93,7 +120,7 @@ Run the narrowest relevant checks for a change:
 
 ```bash
 npm test
-node --check export-issues.js
+node --check export-issues.js && for f in src/*.js; do node --check "$f"; done
 git diff --check
 ```
 

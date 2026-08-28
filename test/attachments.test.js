@@ -9,7 +9,7 @@ const {
   collectPlaceholderKeys,
   rewriteAttachmentLinks,
   downloadAttachments,
-} = require('../export-issues.js');
+} = require('../src/attachments.js');
 
 const UUID = '6a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d';
 

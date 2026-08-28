@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { fetchAllParentIssues, fetchIssue } = require('../export-issues.js');
+const { fetchAllParentIssues, fetchIssue } = require('../src/jira-client.js');
 
 const JIRA = 'https://x.test';
 const FIELDS = 'summary,parent';

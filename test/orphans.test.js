@@ -4,13 +4,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// The module reads OUTPUT_DIR at load time, so it must be set before the
+// src/config.js reads OUTPUT_DIR at load time, so it must be set before the
 // require below. This file is kept separate so the override cannot leak into
 // the other test files.
 const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-export-outdir-'));
 process.env.OUTPUT_DIR = outputDir;
 
-const { generateMarkdown } = require('../export-issues.js');
+const { generateMarkdown } = require('../src/pipeline.js');
 
 const issue = (key, typeName, summary, parentKey) => ({
   key,

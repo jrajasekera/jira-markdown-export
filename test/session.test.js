@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hasValidSession } = require('../export-issues.js');
+const { hasValidSession } = require('../src/session.js');
 
 function fakePage(status, body) {
   return {

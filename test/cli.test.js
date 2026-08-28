@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { parseIssueRef } = require('../export-issues.js');
+const { parseIssueRef } = require('../src/cli.js');
 
 const SCRIPT = path.join(__dirname, '..', 'export-issues.js');
 

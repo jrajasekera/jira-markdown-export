@@ -120,10 +120,10 @@ The JQL is ignored when you pass a single issue key or URL on the command line.
 
 ### Add Custom Fields
 
-If you need additional Jira fields in the export, add them to the `fields` array in `export-issues.js`:
+If you need additional Jira fields in the export, add them to the `ISSUE_FIELDS` array in `src/config.js`:
 
 ```javascript
-const fields = [
+const ISSUE_FIELDS = [
   'summary',
   'description',
   'status',
@@ -131,6 +131,9 @@ const fields = [
   'customfield_10000'  // Add custom field ID
 ].join(',');
 ```
+
+A new field is only fetched at that point — to make it appear in the generated
+Markdown, also render it in `generateIssueMd` (`src/render.js`).
 
 ### Attachments
 

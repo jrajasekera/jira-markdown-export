@@ -3,16 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { sanitizeFilename, sanitizeDir } = require('../src/naming.js');
 const {
-  sanitizeFilename,
-  sanitizeDir,
   isSubtask,
   generatePath,
   generateIssueFiles,
-  generateIssueMd,
   renderIndex,
-  searchIssues,
-} = require('../export-issues.js');
+} = require('../src/layout.js');
+const { generateIssueMd } = require('../src/render.js');
+const { searchIssues } = require('../src/jira-client.js');
 
 const text = (t) => ({ type: 'text', text: t });
 const para = (...content) => ({ type: 'paragraph', content });

@@ -25,8 +25,30 @@ interaction user-controlled and inspect generated files for live verification.
 
 ## Architecture
 
-The implementation remains in `export-issues.js`; focused tests live under
-`test/`. The pipeline is:
+`export-issues.js` is the entry point: it owns `exportJiraIssues` and the CLI
+argument block, and nothing else. Every concern lives in a module under `src/`,
+and `test/` is organised to match one file per module:
+
+| Module | Owns |
+|---|---|
+| `src/config.js` | dotenv, the `JIRA_*` env constants, `ISSUE_FIELDS` |
+| `src/session.js` | `hasValidSession`, `waitForUserInput` |
+| `src/jira-client.js` | `searchIssues`, `fetchIssue`, `fetchAllParentIssues` |
+| `src/cli.js` | `parseIssueRef` |
+| `src/naming.js` | `sanitizeDir`, `sanitizeFilename`, `infoFilename` |
+| `src/attachments.js` | the `attachment:<key>` placeholder syntax, `downloadAttachments` |
+| `src/adf.js` | `descriptionToMd` and the `process*` helpers |
+| `src/render.js` | `generateIssueMd` |
+| `src/layout.js` | `generatePath`, `generateIssueFiles`, `renderIndex`, `isSubtask` |
+| `src/pipeline.js` | `prepareOutputDir`, `generateMarkdown` |
+
+The dependency graph is acyclic and worth keeping that way:
+`pipeline → {config, layout, attachments}`, `layout → {naming, render}`,
+`render → {adf, naming}`, `adf → attachments → naming`,
+`jira-client → config`. In particular `pipeline` does *not* depend on `render` —
+it reaches Markdown rendering only through `layout`.
+
+The pipeline is:
 
 1. **Authentication** (`exportJiraIssues`) — reuse a valid Playwright
    storage-state file when possible, otherwise launch headed Chromium for
@@ -52,8 +74,9 @@ The implementation remains in `export-issues.js`; focused tests live under
 
 - Environment configuration includes `JIRA_URL`, `OUTPUT_DIR`, `JIRA_JQL`,
   `JIRA_STATE_FILE`, `JIRA_DOWNLOAD_ATTACHMENTS`, and
-  `JIRA_MAX_ATTACHMENT_MB`. The exported Jira field list remains in source;
-  adding a field means updating that list and `generateIssueMd`.
+  `JIRA_MAX_ATTACHMENT_MB`. The exported Jira field list is `ISSUE_FIELDS` in
+  `src/config.js`; adding a field means updating that list and `generateIssueMd`
+  in `src/render.js`.
 - `allIssuesMap` is a `Map` inside `fetchAllParentIssues` but a plain object everywhere downstream (`generateMarkdown` rebuilds it). Keep the object form when touching `generatePath` / `generateIssueFiles`, which index it with `[key]`.
 - `fields.issuetype.subtask` determines whether an issue is a leaf file; the
   type name is only a fallback. Keep generated paths and links on the shared
@@ -78,7 +101,7 @@ The implementation remains in `export-issues.js`; focused tests live under
 
 ```bash
 npm test
-node --check export-issues.js
+node --check export-issues.js && for f in src/*.js; do node --check "$f"; done
 git diff --check
 ```
 
