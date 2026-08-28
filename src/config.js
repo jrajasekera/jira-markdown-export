@@ -32,27 +32,61 @@ const STATE_FILE = process.env.JIRA_STATE_FILE === undefined
   ? '.jira-session.json'
   : process.env.JIRA_STATE_FILE;
 
+// Jira assigns custom-field IDs per instance. Overrides are useful when an
+// administrator has renamed a field, or when more than one custom field has
+// the same display name. Empty values opt into automatic discovery.
+function customFieldOverride(name, raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return '';
+  const id = customFieldId(raw);
+  if (!id) {
+    console.warn(`[-] Ignoring ${name}=${raw}: expected customfield_<number>; using automatic discovery`);
+    return '';
+  }
+  return id;
+}
+
+const CUSTOM_FIELD_OVERRIDES = Object.freeze({
+  sprint: customFieldOverride('JIRA_SPRINT_FIELD_ID', process.env.JIRA_SPRINT_FIELD_ID),
+  storyPoints: customFieldOverride('JIRA_STORY_POINTS_FIELD_ID', process.env.JIRA_STORY_POINTS_FIELD_ID),
+  epicLink: customFieldOverride('JIRA_EPIC_LINK_FIELD_ID', process.env.JIRA_EPIC_LINK_FIELD_ID),
+});
+
 // The Jira fields every REST call requests. Adding one here is only half the
 // job: `generateIssueMd` in src/render.js decides what reaches the Markdown,
 // and `generatePath` / `downloadAttachments` depend on `issuetype`, `parent`
 // and `attachment` being present.
-const ISSUE_FIELDS = [
-      'summary',
-      'description',
-      'status',
-      'priority',
-      'assignee',
-      'created',
-      'updated',
-      'issuetype',
-      'issuelinks',
-      'components',
-      'labels',
-      'resolution',
-      'comment',
-      'parent',
-      'attachment'
-    ].join(',');
+const BASE_ISSUE_FIELDS = Object.freeze([
+  'summary',
+  'description',
+  'status',
+  'priority',
+  'assignee',
+  'created',
+  'updated',
+  'issuetype',
+  'issuelinks',
+  'components',
+  'labels',
+  'fixVersions',
+  'resolution',
+  'comment',
+  'parent',
+  'attachment',
+]);
+
+function customFieldId(value) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  return /^customfield_\d+$/.test(id) ? id : undefined;
+}
+
+// `fields` must be the same for JQL search and ancestor fetches. Build it
+// after discovery so every issue has the custom values render needs.
+function buildIssueFields(customFields = {}) {
+  const fieldIds = Object.values(customFields).map(customFieldId).filter(Boolean);
+  return [...new Set([...BASE_ISSUE_FIELDS, ...fieldIds])].join(',');
+}
+
+const ISSUE_FIELDS = buildIssueFields(CUSTOM_FIELD_OVERRIDES);
 
 module.exports = {
   JIRA_URL,
@@ -63,5 +97,10 @@ module.exports = {
   MAX_RETRIES,
   intFromEnv,
   STATE_FILE,
+  CUSTOM_FIELD_OVERRIDES,
+  BASE_ISSUE_FIELDS,
+  customFieldId,
+  customFieldOverride,
+  buildIssueFields,
   ISSUE_FIELDS,
 };

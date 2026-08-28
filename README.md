@@ -202,6 +202,14 @@ Set in `.env`. Only `JIRA_URL` really needs a value.
 | `JIRA_DOWNLOAD_ATTACHMENTS` | `0` | `1` downloads every attachment; any other value, inline media only |
 | `JIRA_MAX_ATTACHMENT_MB` | `25` | Attachments larger than this are skipped |
 | `JIRA_MAX_RETRIES` | `4` | Retries after the first attempt when Jira rate-limits a request (0-10) |
+| `JIRA_SPRINT_FIELD_ID` | auto-discovered | Jira custom field ID for Sprint |
+| `JIRA_STORY_POINTS_FIELD_ID` | auto-discovered | Jira custom field ID for Story Points |
+| `JIRA_EPIC_LINK_FIELD_ID` | auto-discovered | Jira custom field ID for Epic Link |
+
+The exporter reads Jira's field catalog through the authenticated export client
+to find `Sprint`, `Story Points` (or `Story point estimate`), and `Epic Link`.
+Set an override when your instance renames a field or has duplicate matching
+fields; duplicate names stop the export rather than selecting an arbitrary one.
 
 `OUTPUT_DIR` is refused if it resolves to the filesystem root, your home
 directory, the current working directory, or the repository checkout.
@@ -243,13 +251,14 @@ Each Markdown file contains, in order:
 
 | Section | Contents |
 |---|---|
+| YAML frontmatter | key, type, workflow metadata, labels/components, parent, issue URL, and planning fields for filtering tools |
 | Heading | `# KEY - summary` |
 | Metadata line | type, status, priority, assignee, created date |
 | `**Parent:**` | link to the parent's file, or the bare key if the parent was not exported |
 | `## Description` | the ADF description as Markdown, or `No description` |
-| `## Metadata` | updated date |
+| `## Metadata` | updated date, plus sprint, epic link, story points, and fix versions when Jira provides them |
 | `## Related Issues` | issue links, each with its direction ("blocks", "relates to", …), the target's key and summary, and a relative link when that issue is in the export |
-| `## Comments` | each comment with author, date, and converted body |
+| `## Comments` | chronological author/date conversation headings and converted bodies |
 | `## Attachments` | only when `JIRA_DOWNLOAD_ATTACHMENTS=1` |
 
 ### Supported ADF nodes
@@ -346,4 +355,3 @@ disappearing.
 ## License
 
 MIT — see the LICENSE file.
-

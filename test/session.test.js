@@ -21,9 +21,23 @@ test('hasValidSession returns null on 401', async () => {
   assert.equal(await hasValidSession(fakeClient(401, {}), 'https://x.atlassian.net'), null);
 });
 
-test('hasValidSession returns null when the request throws', async () => {
-  const client = { get: async () => { throw new Error('net'); } };
+test('hasValidSession asks the client to return authentication failures for the login fallback', async () => {
+  let options;
+  const client = {
+    get: async (_url, _init, actualOptions) => {
+      options = actualOptions;
+      return { ok: () => false, status: () => 401 };
+    },
+  };
+
   assert.equal(await hasValidSession(client, 'https://x.atlassian.net'), null);
+  assert.deepEqual(options, { allowAuthFailure: true });
+});
+
+test('hasValidSession propagates a request failure instead of claiming the session expired', async () => {
+  const error = new Error('net');
+  const client = { get: async () => { throw error; } };
+  await assert.rejects(() => hasValidSession(client, 'https://x.atlassian.net'), (actual) => actual === error);
 });
 
 test('hasValidSession returns null on 200 without accountId (login page as JSON-less HTML)', async () => {

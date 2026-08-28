@@ -72,7 +72,7 @@ function generatePath(issue, allIssuesMap) {
   return { path, isFile };
 }
 
-function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = null) {
+function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = null, renderOptions = {}) {
   const { path: pathChain, isFile } = pathInfo;
 
   // Build directory path
@@ -96,7 +96,7 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = nul
       if (issueData) {
         const parentIssue = allIssuesMap[issueData.fields.parent?.key];
         const filePath = path.join(currentDir, infoFilename(pathItem.type));
-        fs.writeFileSync(filePath, generateIssueMd(issueData, parentIssue, false, linkResolver(issueData, allIssuesMap)));
+        fs.writeFileSync(filePath, generateIssueMd(issueData, parentIssue, false, linkResolver(issueData, allIssuesMap), renderOptions));
         recordWrite(writes, issueData, filePath, currentDir);
       }
     }
@@ -107,7 +107,7 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = nul
     const filename = sanitizeFilename(issue.key, issue.fields.summary) + '.md';
     const parentIssue = allIssuesMap[issue.fields.parent?.key];
     const filePath = path.join(currentDir, filename);
-    fs.writeFileSync(filePath, generateIssueMd(issue, parentIssue, true, linkResolver(issue, allIssuesMap)));
+    fs.writeFileSync(filePath, generateIssueMd(issue, parentIssue, true, linkResolver(issue, allIssuesMap), renderOptions));
     recordWrite(writes, issue, filePath, currentDir);
   }
 
@@ -118,7 +118,7 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = nul
 
   children.forEach(child => {
     const childPathInfo = generatePath(child, allIssuesMap);
-    generateIssueFiles(child, childPathInfo, baseDir, allIssuesMap, writes);
+    generateIssueFiles(child, childPathInfo, baseDir, allIssuesMap, writes, renderOptions);
   });
 }
 

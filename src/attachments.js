@@ -138,6 +138,7 @@ async function downloadAttachments(writes, client, maxMb, { downloadAll = true }
       try {
         res = await client.get(att.content);
       } catch (error) {
+        if (error.sessionExpired) throw error;
         if (error.rateLimited) rateLimited++;
         console.log(`[-] Failed to download ${label}: ${error.message}`);
         failed++;

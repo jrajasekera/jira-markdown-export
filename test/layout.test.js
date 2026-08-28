@@ -121,9 +121,37 @@ test('generateIssueFiles lays out folders, info files and subtask files', () => 
   }
 });
 
+test('issues with colliding sanitized summaries get deterministic key-prefixed paths', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-export-collisions-'));
+  try {
+    const root = issue('PRJ-20', 'Epic', 'Collision root');
+    const first = issue('PRJ-21', 'Story', 'Same summary!', 'PRJ-20');
+    const second = issue('PRJ-22', 'Story', 'Same summary?', 'PRJ-20');
+    const firstLeaf = issue('PRJ-23', 'Sub-task', 'Same leaf!', 'PRJ-21');
+    const secondLeaf = issue('PRJ-24', 'Sub-task', 'Same leaf?', 'PRJ-21');
+    const collisionMap = Object.fromEntries(
+      [root, first, second, firstLeaf, secondLeaf].map(item => [item.key, item])
+    );
+
+    generateIssueFiles(root, generatePath(root, collisionMap), tmpDir, collisionMap);
+
+    const rootDir = path.join(tmpDir, 'PRJ-20-collision-root');
+    assert.ok(fs.existsSync(path.join(rootDir, 'PRJ-21-same-summary/_story.md')));
+    assert.ok(fs.existsSync(path.join(rootDir, 'PRJ-22-same-summary/_story.md')));
+    assert.ok(fs.existsSync(path.join(rootDir, 'PRJ-21-same-summary/PRJ-23-same-leaf.md')));
+    assert.ok(fs.existsSync(path.join(rootDir, 'PRJ-21-same-summary/PRJ-24-same-leaf.md')));
+
+    assert.notEqual(issueHref(first, collisionMap), issueHref(second, collisionMap));
+    assert.notEqual(issueHref(firstLeaf, collisionMap), issueHref(secondLeaf, collisionMap));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('generateIssueMd renders the issue header and metadata', () => {
   const md = generateIssueMd(sub, story, true);
-  assert.equal(md.split('\n')[0], '# PRJ-3 - Do thing');
+  assert.ok(md.startsWith('---\nkey: "PRJ-3"'));
+  assert.ok(md.includes('# PRJ-3 - Do thing'));
   assert.ok(md.includes('**Type:** Sub-task | **Status:** To Do | **Priority:** Medium'));
   assert.ok(md.includes('**Created:** 2026-01-02'));
   assert.ok(md.includes('No description'));
@@ -209,9 +237,48 @@ test('generateIssueMd renders comments', () => {
     }],
   };
   const md = generateIssueMd(withComment, undefined, false);
-  assert.ok(md.includes('### Comment 1'));
-  assert.ok(md.includes('**Author:** Bob | **Date:** 2026-02-01'));
+  assert.ok(md.includes('### Bob — 2026-02-01'));
+  assert.ok(!md.includes('Comment 1'));
   assert.ok(md.includes('hi'));
+});
+
+test('generateIssueMd emits escaped frontmatter and custom Jira fields', () => {
+  const detailed = issue('PRJ-4', 'Story', 'Detail');
+  detailed.fields.labels = ['needs: review', 'line\nbreak', '"quoted"'];
+  detailed.fields.components = [{ name: 'Core: API' }];
+  detailed.fields.fixVersions = [{ name: 'v1.0' }, { name: 'v2 "beta"' }];
+  detailed.fields.customfield_1 = ['com.atlassian.greenhopper.service.sprint.Sprint@1[id=1,name=June Sprint,state=ACTIVE]'];
+  detailed.fields.customfield_2 = 3;
+  detailed.fields.customfield_3 = 'PRJ-1';
+
+  const md = generateIssueMd(detailed, undefined, false, undefined, {
+    jiraUrl: 'https://example.atlassian.net/',
+    customFields: { sprint: 'customfield_1', storyPoints: 'customfield_2', epicLink: 'customfield_3' },
+  });
+  assert.match(md, /^---\nkey: "PRJ-4"/);
+  assert.match(md, /labels:\n  - "needs: review"\n  - "line\\nbreak"\n  - "\\"quoted\\""/);
+  assert.match(md, /components:\n  - "Core: API"/);
+  assert.match(md, /jira_url: "https:\/\/example.atlassian.net\/browse\/PRJ-4"/);
+  assert.match(md, /sprint:\n  - "June Sprint"/);
+  assert.match(md, /epic_link: "PRJ-1"/);
+  assert.match(md, /story_points: 3/);
+  assert.match(md, /fix_versions:\n  - "v1.0"\n  - "v2 \\"beta\\""/);
+  assert.match(md, /- \*\*Sprint:\*\* June Sprint/);
+  assert.match(md, /- \*\*Epic Link:\*\* PRJ-1/);
+  assert.match(md, /- \*\*Story Points:\*\* 3/);
+  assert.match(md, /- \*\*Fix Versions:\*\* v1.0, v2 "beta"/);
+});
+
+test('generateIssueMd sorts comments chronologically before rendering headings', () => {
+  const threaded = issue('PRJ-5', 'Task', 'Thread');
+  threaded.fields.comment = {
+    comments: [
+      { author: { displayName: 'Later' }, created: '2026-03-02T00:00:00.000+0000', body: 'second' },
+      { author: { displayName: 'Earlier' }, created: '2026-03-01T00:00:00.000+0000', body: 'first' },
+    ],
+  };
+  const md = generateIssueMd(threaded, undefined, false);
+  assert.ok(md.indexOf('### Earlier — 2026-03-01') < md.indexOf('### Later — 2026-03-02'));
 });
 
 // --- searchIssues pagination ---

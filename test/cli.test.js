@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { parseIssueRef, describeIssueFetchError } = require('../src/cli.js');
+const { parseIssueRef, parseExportArgs, describeIssueFetchError } = require('../src/cli.js');
 
 const SCRIPT = path.join(__dirname, '..', 'export-issues.js');
 
@@ -70,11 +70,46 @@ test('an unparseable reference exits 1 without touching the output directory', (
   assert.equal(fs.existsSync(outputDir), false);
 });
 
-test('more than one argument exits 1 without touching the output directory', () => {
-  const { status, stderr, outputDir } = runCli(['ABC-1', 'ABC-2']);
+test('an invalid reference among multiple references exits 1 without touching the output directory', () => {
+  const { status, stderr, outputDir } = runCli(['ABC-1', 'not-a-key', 'PRJ-2']);
 
   assert.equal(status, 1);
-  assert.match(stderr, /Expected at most one issue key or URL/);
+  assert.match(stderr, /Not a Jira issue key or URL: not-a-key/);
+  assert.equal(fs.existsSync(outputDir), false);
+});
+
+test('multiple references are normalized and de-duplicated', () => {
+  assert.deepEqual(parseExportArgs([
+    'abc-1',
+    'https://x.atlassian.net/browse/ABC-1',
+    'PRJ-2',
+  ]), {
+    issueKeys: ['ABC-1', 'PRJ-2'],
+    jql: undefined,
+  });
+});
+
+test('a JQL export scope is parsed without issue keys', () => {
+  assert.deepEqual(parseExportArgs(['--jql', 'project = ABC AND status = Open']), {
+    issueKeys: [],
+    jql: 'project = ABC AND status = Open',
+  });
+});
+
+test('a missing --jql value exits 1 without touching the output directory', () => {
+  const { status, stderr, outputDir } = runCli(['--jql']);
+
+  assert.equal(status, 1);
+  assert.match(stderr, /Missing JQL value after --jql/);
+  assert.match(stderr, /Usage: node export-issues\.js/);
+  assert.equal(fs.existsSync(outputDir), false);
+});
+
+test('mixing --jql with a reference exits 1 without touching the output directory', () => {
+  const { status, stderr, outputDir } = runCli(['ABC-1', '--jql', 'project = ABC']);
+
+  assert.equal(status, 1);
+  assert.match(stderr, /Cannot combine --jql with issue keys or URLs/);
   assert.match(stderr, /Usage: node export-issues\.js/);
   assert.equal(fs.existsSync(outputDir), false);
 });

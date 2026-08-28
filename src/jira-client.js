@@ -1,5 +1,52 @@
 const { JQL } = require('./config.js');
 
+const CUSTOM_FIELD_NAMES = Object.freeze({
+  sprint: ['Sprint'],
+  storyPoints: ['Story Points', 'Story point estimate'],
+  epicLink: ['Epic Link'],
+});
+
+function matchingCustomFields(fields, names) {
+  const wanted = new Set(names.map(name => name.toLocaleLowerCase()));
+  return fields.filter(field =>
+    /^customfield_\d+$/.test(field?.id || '')
+    && wanted.has(String(field.name || '').toLocaleLowerCase())
+  );
+}
+
+// Jira's field IDs are installation-specific. Resolve only the fields that
+// were not explicitly configured. A duplicate display name is unsafe to guess;
+// the caller gets an actionable error naming the override to set.
+async function resolveCustomFieldIds(client, jiraUrl, overrides = {}) {
+  const unresolved = Object.keys(CUSTOM_FIELD_NAMES).filter(name => !overrides[name]);
+  if (unresolved.length === 0) return { ...overrides };
+
+  const response = await client.get(`${jiraUrl}/rest/api/3/field`, {
+    headers: { 'Accept': 'application/json' },
+  });
+  if (!response.ok()) {
+    const error = new Error(`Failed to discover Jira fields: ${response.status()}`);
+    error.status = response.status();
+    throw error;
+  }
+
+  const fields = await response.json();
+  if (!Array.isArray(fields)) {
+    throw new Error(`Unexpected Jira field response: ${JSON.stringify(fields).slice(0, 200)}`);
+  }
+
+  const resolved = { ...overrides };
+  for (const name of unresolved) {
+    const matches = matchingCustomFields(fields, CUSTOM_FIELD_NAMES[name]);
+    if (matches.length > 1) {
+      const envName = `JIRA_${name.replace(/([A-Z])/g, '_$1').toUpperCase()}_FIELD_ID`;
+      throw new Error(`Multiple Jira custom fields match ${CUSTOM_FIELD_NAMES[name].join(' or ')}; set ${envName}.`);
+    }
+    if (matches.length === 1) resolved[name] = matches[0].id;
+  }
+  return resolved;
+}
+
 async function searchIssues(client, jiraUrl, fieldsString, jql = JQL) {
   const issues = [];
   let nextPageToken;
@@ -92,7 +139,7 @@ async function fetchAllParentIssues(issues, client, jiraUrl, fieldsString) {
         // Being throttled is not the same as being refused. Treating it like a
         // missing parent would quietly reparent the child to the top level and
         // ship a wrong hierarchy, so it aborts the export instead.
-        if (error.rateLimited) throw error;
+        if (error.rateLimited || error.sessionExpired || error.transient) throw error;
 
         // A parent we cannot reach is not fatal: the child is exported at top level.
         if (error.status) {
@@ -111,4 +158,5 @@ module.exports = {
   searchIssues,
   fetchIssue,
   fetchAllParentIssues,
+  resolveCustomFieldIds,
 };

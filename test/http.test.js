@@ -1,6 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createJiraClient, RateLimitError, parseRetryAfter } = require('../src/http.js');
+const {
+  createJiraClient,
+  RateLimitError,
+  SessionExpiredError,
+  TransientRequestError,
+  parseRetryAfter,
+} = require('../src/http.js');
 
 const URL = 'https://x.test/rest/api/3/myself';
 
@@ -16,6 +22,7 @@ function harness(responses, options = {}) {
         urls.push(url);
         const next = responses.shift();
         if (!next) throw new Error('unexpected extra request');
+        if (next instanceof Error) throw next;
         return next;
       },
     },
@@ -102,6 +109,83 @@ test('retries a 503 the same way as a 429', async () => {
 
   assert.equal(result.status(), 200);
   assert.deepEqual(sleeps, [500]);
+});
+
+test('retries transient 5xx responses with bounded backoff', async () => {
+  const { client, sleeps, urls } = harness([respond(502), respond(504), respond(200)]);
+
+  const { result } = await captureLog(() => client.get(URL));
+
+  assert.equal(result.status(), 200);
+  assert.equal(urls.length, 3);
+  assert.deepEqual(sleeps, [500, 1000]);
+});
+
+test('reports an exhausted transient 5xx response without calling it rate limiting', async () => {
+  const { client } = harness([respond(500), respond(500)], { maxRetries: 1 });
+
+  await captureLog(() => assert.rejects(
+    () => client.get(URL),
+    (error) => error instanceof TransientRequestError && error.status === 500 && !error.rateLimited
+  ));
+});
+
+test('retries transient connection resets with bounded backoff', async () => {
+  const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+  const { client, sleeps, urls } = harness([reset, respond(200)]);
+
+  const { result } = await captureLog(() => client.get(URL));
+
+  assert.equal(result.status(), 200);
+  assert.equal(urls.length, 2);
+  assert.deepEqual(sleeps, [500]);
+});
+
+test('reports an exhausted transient network error', async () => {
+  const reset = Object.assign(new Error('net::ERR_CONNECTION_RESET'), { code: 'ECONNRESET' });
+  const { client } = harness([reset], { maxRetries: 0 });
+
+  await captureLog(() => assert.rejects(
+    () => client.get(URL),
+    (error) => error instanceof TransientRequestError && error.transient === true && error.cause === reset
+  ));
+});
+
+test('fails immediately with session recovery guidance on 401 or 403', async () => {
+  for (const status of [401, 403]) {
+    const { client, sleeps, urls } = harness([respond(status)]);
+    await assert.rejects(
+      () => client.get(URL),
+      (error) => error instanceof SessionExpiredError
+        && error.sessionExpired === true
+        && error.status === status
+        && /Delete or refresh the saved session/.test(error.message)
+    );
+    assert.equal(urls.length, 1);
+    assert.deepEqual(sleeps, []);
+  }
+});
+
+test('fails immediately when a REST request lands on a login page', async () => {
+  const login = { ...respond(200), url: () => 'https://sso.example.test/login?continue=example' };
+  const { client } = harness([login]);
+
+  await assert.rejects(() => client.get(URL), SessionExpiredError);
+});
+
+test('fails immediately when a REST request redirects to a non-API IdP path', async () => {
+  const idp = { ...respond(200), url: () => 'https://idp.example.test/saml/consume' };
+  const { client } = harness([idp]);
+
+  await assert.rejects(() => client.get(URL), SessionExpiredError);
+});
+
+test('returns authentication failures unchanged for the initial session probe only', async () => {
+  const { client } = harness([respond(401)]);
+
+  const response = await client.get(URL, undefined, { allowAuthFailure: true });
+
+  assert.equal(response.status(), 401);
 });
 
 test('throws a rate-limit error once retries are exhausted', async () => {

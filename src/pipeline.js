@@ -24,7 +24,7 @@ function prepareOutputDir(dir) {
   return resolved;
 }
 
-async function generateMarkdown(issues, client) {
+async function generateMarkdown(issues, client, renderOptions = {}) {
   prepareOutputDir(OUTPUT_DIR);
 
   // Build issues map for quick lookup
@@ -50,7 +50,7 @@ async function generateMarkdown(issues, client) {
   const writes = [];
   rootIssues.forEach(rootIssue => {
     const pathInfo = generatePath(rootIssue, allIssuesMap);
-    generateIssueFiles(rootIssue, pathInfo, OUTPUT_DIR, allIssuesMap, writes);
+    generateIssueFiles(rootIssue, pathInfo, OUTPUT_DIR, allIssuesMap, writes, renderOptions);
   });
 
   fs.writeFileSync(path.join(OUTPUT_DIR, 'index.md'), renderIndex(issues, rootIssues, allIssuesMap));

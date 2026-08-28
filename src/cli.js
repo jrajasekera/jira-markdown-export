@@ -36,13 +36,53 @@ function parseIssueRef(input) {
   return null;
 }
 
+// Parse the command-line export scope before the export starts. Keeping this
+// separate from the entry point ensures bad input is rejected before a browser
+// is opened or the output directory can be prepared.
+function parseExportArgs(args) {
+  const issueKeys = [];
+  let jql;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+
+    if (argument === '--jql') {
+      const value = args[index + 1];
+      if (typeof value !== 'string' || !value.trim() || value.startsWith('--')) {
+        return { error: 'Missing JQL value after --jql.' };
+      }
+      if (jql !== undefined) {
+        return { error: 'Specify --jql at most once.' };
+      }
+      jql = value;
+      index += 1;
+      continue;
+    }
+
+    const issueKey = parseIssueRef(argument);
+    if (!issueKey) {
+      return { error: `Not a Jira issue key or URL: ${argument}` };
+    }
+    issueKeys.push(issueKey);
+  }
+
+  if (jql !== undefined && issueKeys.length > 0) {
+    return { error: 'Cannot combine --jql with issue keys or URLs.' };
+  }
+
+  return {
+    issueKeys: [...new Set(issueKeys)],
+    jql,
+  };
+}
+
 // The message shown when a single-issue export cannot fetch its seed. A bad key
 // and a missing permission both look like an HTTP refusal, so the friendly
 // rewrite covers them - but a rate-limit failure is neither, and telling the
 // user to check the key would send them chasing the wrong problem. Those pass
 // through untouched.
 function describeIssueFetchError(error, issueKey) {
-  if (error.rateLimited) return error;
+  if (error.rateLimited || error.sessionExpired || error.transient) return error;
 
   const status = error.status ? ` (${error.status})` : '';
   return new Error(`Could not fetch ${issueKey}${status} - check the key and that you have access`);
@@ -50,5 +90,6 @@ function describeIssueFetchError(error, issueKey) {
 
 module.exports = {
   parseIssueRef,
+  parseExportArgs,
   describeIssueFetchError,
 };

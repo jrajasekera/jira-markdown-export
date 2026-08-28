@@ -1,6 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { intFromEnv } = require('../src/config.js');
+const {
+  intFromEnv,
+  buildIssueFields,
+  customFieldId,
+  customFieldOverride,
+} = require('../src/config.js');
 
 const BOUNDS = { min: 0, max: 10 };
 
@@ -47,4 +52,30 @@ test('intFromEnv warns by name so a typo is findable', () => {
 
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /JIRA_MAX_RETRIES=lots/);
+});
+
+test('custom field IDs are validated before being added to every issue request', () => {
+  assert.equal(customFieldId(' customfield_10020 '), 'customfield_10020');
+  assert.equal(customFieldId('Sprint'), undefined);
+  assert.equal(customFieldId('customfield_nope'), undefined);
+
+  const fields = buildIssueFields({ sprint: 'customfield_10020', storyPoints: 'invalid' });
+  assert.match(fields, /fixVersions/);
+  assert.match(fields, /customfield_10020/);
+  assert.doesNotMatch(fields, /invalid/);
+});
+
+test('invalid custom field overrides fall back to automatic discovery with a warning', () => {
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (line) => warnings.push(line);
+  try {
+    assert.equal(customFieldOverride('JIRA_SPRINT_FIELD_ID', 'Sprint'), '');
+  } finally {
+    console.warn = original;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /JIRA_SPRINT_FIELD_ID=Sprint/);
+  assert.match(warnings[0], /automatic discovery/);
 });

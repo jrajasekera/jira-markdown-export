@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { fetchAllParentIssues, fetchIssue } = require('../src/jira-client.js');
+const { fetchAllParentIssues, fetchIssue, resolveCustomFieldIds } = require('../src/jira-client.js');
 
 const JIRA = 'https://x.test';
 const FIELDS = 'summary,parent';
@@ -93,6 +93,20 @@ test('a rate-limited parent fetch aborts instead of orphaning the child', async 
   );
 });
 
+test('an exhausted transient parent fetch aborts instead of orphaning the child', async () => {
+  const leaf = { key: 'PRJ-3', fields: { parent: { key: 'PRJ-2' } } };
+  const transient = Object.assign(new Error('Jira request did not recover'), {
+    status: 502,
+    transient: true,
+  });
+  const client = { get: async () => { throw transient; } };
+
+  await assert.rejects(
+    () => fetchAllParentIssues([leaf], client, JIRA, FIELDS),
+    (error) => error === transient
+  );
+});
+
 test('fetchIssue returns the issue body on success', async () => {
   const issue = { key: 'PRJ-1', fields: {} };
   const client = fakeClient({ 'PRJ-1': issue });
@@ -128,4 +142,54 @@ test('a non-OK parent is logged as a failed fetch, not an error', async () => {
 
   assert.ok(lines.includes('[-] Failed to fetch PRJ-2: 404'), lines.join('\n'));
   assert.equal(lines.some(l => l.startsWith('[-] Error fetching')), false);
+});
+
+test('resolves custom field IDs by Jira display name', async () => {
+  const urls = [];
+  const client = {
+    async get(url) {
+      urls.push(url);
+      return {
+        ok: () => true,
+        status: () => 200,
+        json: async () => [
+          { id: 'customfield_10020', name: 'Sprint' },
+          { id: 'customfield_10016', name: 'Story point estimate' },
+          { id: 'customfield_10014', name: 'Epic Link' },
+        ],
+      };
+    },
+  };
+
+  assert.deepEqual(
+    await resolveCustomFieldIds(client, JIRA, {}),
+    { sprint: 'customfield_10020', storyPoints: 'customfield_10016', epicLink: 'customfield_10014' }
+  );
+  assert.deepEqual(urls, [`${JIRA}/rest/api/3/field`]);
+});
+
+test('configured custom field IDs skip discovery', async () => {
+  const client = { get: async () => assert.fail('field discovery should not run') };
+  const configured = { sprint: 'customfield_1', storyPoints: 'customfield_2', epicLink: 'customfield_3' };
+  assert.deepEqual(await resolveCustomFieldIds(client, JIRA, configured), configured);
+});
+
+test('ambiguous Jira custom field names require an explicit override', async () => {
+  const client = {
+    async get() {
+      return {
+        ok: () => true,
+        status: () => 200,
+        json: async () => [
+          { id: 'customfield_1', name: 'Sprint' },
+          { id: 'customfield_2', name: 'Sprint' },
+        ],
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => resolveCustomFieldIds(client, JIRA, {}),
+    /Multiple Jira custom fields match Sprint; set JIRA_SPRINT_FIELD_ID/
+  );
 });
