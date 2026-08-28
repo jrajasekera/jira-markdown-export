@@ -31,7 +31,8 @@ and `test/` is organised to match one file per module:
 
 | Module | Owns |
 |---|---|
-| `src/config.js` | dotenv, the `JIRA_*` env constants, `ISSUE_FIELDS` |
+| `src/config.js` | dotenv, the `JIRA_*` env constants, `intFromEnv`, `ISSUE_FIELDS` |
+| `src/http.js` | `createJiraClient`, `RateLimitError` — retry/backoff and adaptive pacing |
 | `src/session.js` | `hasValidSession`, `waitForUserInput` |
 | `src/jira-client.js` | `searchIssues`, `fetchIssue`, `fetchAllParentIssues` |
 | `src/cli.js` | `parseIssueRef` |
@@ -45,7 +46,7 @@ and `test/` is organised to match one file per module:
 The dependency graph is acyclic and worth keeping that way:
 `pipeline → {config, layout, attachments}`, `layout → {naming, render}`,
 `render → {adf, naming}`, `adf → attachments → naming`,
-`jira-client → config`. In particular `pipeline` does *not* depend on `render` —
+`jira-client → config`, `http → config`. In particular `pipeline` does *not* depend on `render` —
 it reaches Markdown rendering only through `layout`.
 
 The pipeline is:
@@ -73,10 +74,20 @@ The pipeline is:
 ## Conventions and gotchas
 
 - Environment configuration includes `JIRA_URL`, `OUTPUT_DIR`, `JIRA_JQL`,
-  `JIRA_STATE_FILE`, `JIRA_DOWNLOAD_ATTACHMENTS`, and
-  `JIRA_MAX_ATTACHMENT_MB`. The exported Jira field list is `ISSUE_FIELDS` in
+  `JIRA_STATE_FILE`, `JIRA_DOWNLOAD_ATTACHMENTS`,
+  `JIRA_MAX_ATTACHMENT_MB`, and `JIRA_MAX_RETRIES`. The exported Jira field list is `ISSUE_FIELDS` in
   `src/config.js`; adding a field means updating that list and `generateIssueMd`
   in `src/render.js`.
+- Every Jira request goes through the client `createJiraClient` returns, not
+  `page.request.get` directly. Call sites take that client in place of `page`
+  (same arity), which is what keeps retry and pacing state shared across the
+  run. `export-issues.js` builds page and client together in one helper so a
+  re-created page cannot end up without its client.
+- A `RateLimitError` (`error.rateLimited === true`) is not an ordinary API
+  refusal. `fetchAllParentIssues` rethrows it instead of orphaning the child,
+  `hasValidSession` rethrows it instead of reporting an expired session, and
+  `describeIssueFetchError` passes it through instead of blaming the issue key.
+  Downloading attachments is the one best-effort exception.
 - `allIssuesMap` is a `Map` inside `fetchAllParentIssues` but a plain object everywhere downstream (`generateMarkdown` rebuilds it). Keep the object form when touching `generatePath` / `generateIssueFiles`, which index it with `[key]`.
 - `fields.issuetype.subtask` determines whether an issue is a leaf file; the
   type name is only a fallback. Keep generated paths and links on the shared

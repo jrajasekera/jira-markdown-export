@@ -36,6 +36,19 @@ function parseIssueRef(input) {
   return null;
 }
 
+// The message shown when a single-issue export cannot fetch its seed. A bad key
+// and a missing permission both look like an HTTP refusal, so the friendly
+// rewrite covers them - but a rate-limit failure is neither, and telling the
+// user to check the key would send them chasing the wrong problem. Those pass
+// through untouched.
+function describeIssueFetchError(error, issueKey) {
+  if (error.rateLimited) return error;
+
+  const status = error.status ? ` (${error.status})` : '';
+  return new Error(`Could not fetch ${issueKey}${status} - check the key and that you have access`);
+}
+
 module.exports = {
   parseIssueRef,
+  describeIssueFetchError,
 };

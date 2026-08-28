@@ -75,12 +75,15 @@ function renderAttachmentList(entries) {
 // rewritten to its local path. A placeholder whose attachment was skipped or
 // failed falls back to the Jira URL, which at least resolves for a logged-in
 // reader, instead of staying an unusable `attachment:` link. Failures are
-// logged and skipped so one bad attachment never aborts the export.
-async function downloadAttachments(writes, page, maxMb, { downloadAll = true } = {}) {
+// logged and skipped so one bad attachment never aborts the export — including
+// a rate-limited one, which is counted separately so the summary can say why an
+// export came out thin.
+async function downloadAttachments(writes, client, maxMb, { downloadAll = true } = {}) {
   const limit = maxMb * 1024 * 1024;
   let downloaded = 0;
   let skipped = 0;
   let failed = 0;
+  let rateLimited = 0;
 
   for (const { issue, filePath, dir } of writes) {
     const attachments = issue.fields?.attachment || [];
@@ -133,8 +136,9 @@ async function downloadAttachments(writes, page, maxMb, { downloadAll = true } =
 
       let res;
       try {
-        res = await page.request.get(att.content);
+        res = await client.get(att.content);
       } catch (error) {
+        if (error.rateLimited) rateLimited++;
         console.log(`[-] Failed to download ${label}: ${error.message}`);
         failed++;
         fallback();
@@ -165,8 +169,9 @@ async function downloadAttachments(writes, page, maxMb, { downloadAll = true } =
     if (withList !== markdown) fs.writeFileSync(filePath, withList);
   }
 
-  console.log(`[+] Attachments: ${downloaded} downloaded, ${skipped} skipped, ${failed} failed`);
-  return { downloaded, skipped, failed };
+  const throttled = rateLimited > 0 ? ` (${rateLimited} rate-limited)` : '';
+  console.log(`[+] Attachments: ${downloaded} downloaded, ${skipped} skipped, ${failed} failed${throttled}`);
+  return { downloaded, skipped, failed, rateLimited };
 }
 
 module.exports = {

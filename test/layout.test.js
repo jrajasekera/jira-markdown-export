@@ -216,15 +216,13 @@ test('generateIssueMd renders comments', () => {
 
 // --- searchIssues pagination ---
 
-const fakeSearchPage = (responder) => {
+const fakeSearchClient = (responder) => {
   const urls = [];
   return {
     urls,
-    request: {
-      get: async (url) => {
-        urls.push(url);
-        return responder(url);
-      },
+    get: async (url) => {
+      urls.push(url);
+      return responder(url);
     },
   };
 };
@@ -238,25 +236,25 @@ const ok = (payload) => ({
 test('searchIssues follows nextPageToken across pages', async () => {
   const a = { key: 'A-1', fields: { summary: 'a' } };
   const b = { key: 'B-1', fields: { summary: 'b' } };
-  const page = fakeSearchPage((url) =>
+  const client = fakeSearchClient((url) =>
     url.includes('nextPageToken=')
       ? ok({ issues: [b], isLast: true })
       : ok({ issues: [a], isLast: false, nextPageToken: 'tok1' })
   );
 
-  const issues = await searchIssues(page, 'https://x.atlassian.net', 'summary');
+  const issues = await searchIssues(client, 'https://x.atlassian.net', 'summary');
 
   assert.deepEqual(issues.map(i => i.key), ['A-1', 'B-1']);
-  assert.equal(page.urls.length, 2);
-  assert.ok(page.urls[1].includes('nextPageToken=tok1'));
+  assert.equal(client.urls.length, 2);
+  assert.ok(client.urls[1].includes('nextPageToken=tok1'));
 });
 
 test('searchIssues encodes the default JQL, maxResults, and fields', async () => {
-  const page = fakeSearchPage(() => ok({ issues: [], isLast: true }));
+  const client = fakeSearchClient(() => ok({ issues: [], isLast: true }));
 
-  await searchIssues(page, 'https://x.atlassian.net', 'summary,description');
+  await searchIssues(client, 'https://x.atlassian.net', 'summary,description');
 
-  const url = page.urls[0];
+  const url = client.urls[0];
   assert.ok(url.includes('/rest/api/3/search/jql?'), url);
   assert.ok(url.includes('jql=assignee+%3D+currentUser%28%29'), url);
   assert.ok(url.includes('maxResults='), url);
@@ -264,16 +262,16 @@ test('searchIssues encodes the default JQL, maxResults, and fields', async () =>
 });
 
 test('searchIssues encodes a custom JQL passed as an argument', async () => {
-  const page = fakeSearchPage(() => ok({ issues: [], isLast: true }));
+  const client = fakeSearchClient(() => ok({ issues: [], isLast: true }));
 
   await searchIssues(
-    page,
+    client,
     'https://x.atlassian.net',
     'summary',
     'project = "My Proj" AND updated >= -7d'
   );
 
-  const url = page.urls[0];
+  const url = client.urls[0];
   assert.ok(
     url.includes('jql=project+%3D+%22My+Proj%22+AND+updated+%3E%3D+-7d'),
     url
@@ -281,33 +279,33 @@ test('searchIssues encodes a custom JQL passed as an argument', async () => {
 });
 
 test('searchIssues stops after a single last page', async () => {
-  const page = fakeSearchPage(() => ok({ issues: [{ key: 'A-1', fields: { summary: 'a' } }], isLast: true }));
+  const client = fakeSearchClient(() => ok({ issues: [{ key: 'A-1', fields: { summary: 'a' } }], isLast: true }));
 
-  const issues = await searchIssues(page, 'https://x.atlassian.net', 'summary');
+  const issues = await searchIssues(client, 'https://x.atlassian.net', 'summary');
 
   assert.equal(issues.length, 1);
-  assert.equal(page.urls.length, 1);
-  assert.ok(!page.urls[0].includes('nextPageToken='));
+  assert.equal(client.urls.length, 1);
+  assert.ok(!client.urls[0].includes('nextPageToken='));
 });
 
 test('searchIssues throws on a non-OK response', async () => {
-  const page = fakeSearchPage(() => ({
+  const client = fakeSearchClient(() => ({
     ok: () => false,
     status: () => 401,
     json: async () => ({}),
   }));
 
   await assert.rejects(
-    () => searchIssues(page, 'https://x.atlassian.net', 'summary'),
+    () => searchIssues(client, 'https://x.atlassian.net', 'summary'),
     /401/
   );
 });
 
 test('searchIssues throws when the response has no issues array', async () => {
-  const page = fakeSearchPage(() => ok({ errorMessages: ['bad jql'] }));
+  const client = fakeSearchClient(() => ok({ errorMessages: ['bad jql'] }));
 
   await assert.rejects(
-    () => searchIssues(page, 'https://x.atlassian.net', 'summary'),
+    () => searchIssues(client, 'https://x.atlassian.net', 'summary'),
     /Unexpected search response/
   );
 });

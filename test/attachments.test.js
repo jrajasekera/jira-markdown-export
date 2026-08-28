@@ -82,22 +82,20 @@ test('downloadAttachments honours the size limit and rewrites the issue file', a
   );
 
   const requested = [];
-  const page = {
-    request: {
-      get: async (url) => {
-        requested.push(url);
-        return { ok: () => true, status: () => 200, body: async () => Buffer.from('png') };
-      },
+  const client = {
+    get: async (url) => {
+      requested.push(url);
+      return { ok: () => true, status: () => 200, body: async () => Buffer.from('png') };
     },
   };
 
   const stats = await downloadAttachments(
     [{ issue: { key: 'PROJ-1', fields: { attachment: [small, big] } }, filePath, dir: tmpDir }],
-    page,
+    client,
     25
   );
 
-  assert.deepEqual(stats, { downloaded: 1, skipped: 1, failed: 0 });
+  assert.deepEqual(stats, { downloaded: 1, skipped: 1, failed: 0, rateLimited: 0 });
   assert.deepEqual(requested, [small.content]);
   assert.ok(fs.existsSync(path.join(tmpDir, 'attachments', '1-small.png')));
   assert.ok(!fs.existsSync(path.join(tmpDir, 'attachments', '2-big.zip')));
@@ -116,8 +114,8 @@ test('downloadAttachments logs a failed request without throwing and falls back 
   const filePath = path.join(tmpDir, 'PROJ-2-thing.md');
   fs.writeFileSync(filePath, '# PROJ-2\n\n![a.png](attachment:x)\n');
 
-  const page = {
-    request: { get: async () => ({ ok: () => false, status: () => 403 }) },
+  const client = {
+    get: async () => ({ ok: () => false, status: () => 403 }),
   };
 
   const stats = await downloadAttachments(
@@ -129,11 +127,11 @@ test('downloadAttachments logs a failed request without throwing and falls back 
       filePath,
       dir: tmpDir,
     }],
-    page,
+    client,
     25
   );
 
-  assert.deepEqual(stats, { downloaded: 0, skipped: 0, failed: 1 });
+  assert.deepEqual(stats, { downloaded: 0, skipped: 0, failed: 1, rateLimited: 0 });
   assert.equal(
     fs.readFileSync(filePath, 'utf8'),
     '# PROJ-2\n\n![a.png](https://jira.example/c/1)\n'
@@ -169,12 +167,10 @@ test('downloadAttachments fetches only referenced media when downloadAll is off'
   fs.writeFileSync(filePath, `# PROJ-3\n\n![attachment](attachment:${UUID})\n`);
 
   const requested = [];
-  const page = {
-    request: {
-      get: async (url) => {
-        requested.push(url);
-        return { ok: () => true, status: () => 200, body: async () => Buffer.from('png') };
-      },
+  const client = {
+    get: async (url) => {
+      requested.push(url);
+      return { ok: () => true, status: () => 200, body: async () => Buffer.from('png') };
     },
   };
 
@@ -184,12 +180,12 @@ test('downloadAttachments fetches only referenced media when downloadAll is off'
       filePath,
       dir: tmpDir,
     }],
-    page,
+    client,
     25,
     { downloadAll: false }
   );
 
-  assert.deepEqual(stats, { downloaded: 1, skipped: 0, failed: 0 });
+  assert.deepEqual(stats, { downloaded: 1, skipped: 0, failed: 0, rateLimited: 0 });
   assert.deepEqual(requested, [inline.content]);
   assert.ok(fs.existsSync(path.join(tmpDir, 'attachments', '1-inline.png')));
   assert.ok(!fs.existsSync(path.join(tmpDir, 'attachments', '2-spec.pdf')));
@@ -224,8 +220,8 @@ test('downloadAttachments falls back to the Jira URL when a download does not ha
     `# PROJ-4\n\n![huge.png](attachment:${UUID})\n\n![denied.png](attachment:unknown-key)\n`
   );
 
-  const page = {
-    request: { get: async () => ({ ok: () => false, status: () => 403 }) },
+  const client = {
+    get: async () => ({ ok: () => false, status: () => 403 }),
   };
 
   const stats = await downloadAttachments(
@@ -234,16 +230,51 @@ test('downloadAttachments falls back to the Jira URL when a download does not ha
       filePath,
       dir: tmpDir,
     }],
-    page,
+    client,
     25,
     { downloadAll: false }
   );
 
-  assert.deepEqual(stats, { downloaded: 0, skipped: 1, failed: 1 });
+  assert.deepEqual(stats, { downloaded: 0, skipped: 1, failed: 1, rateLimited: 0 });
 
   const md = fs.readFileSync(filePath, 'utf8');
   assert.match(md, /!\[huge\.png\]\(https:\/\/jira\.example\/rest\/api\/3\/attachment\/content\/1\)/);
   // Matched by its alt text, so the failed download still resolves to Jira.
   assert.match(md, /!\[denied\.png\]\(https:\/\/jira\.example\/rest\/api\/3\/attachment\/content\/2\)/);
   assert.doesNotMatch(md, /attachment:/);
+});
+
+test('a rate-limited attachment is counted separately and does not abort the run', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-att-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  const filePath = path.join(tmpDir, 'PROJ-5-thing.md');
+  fs.writeFileSync(filePath, '# PROJ-5\n\n![a.png](attachment:1)\n');
+
+  const client = {
+    get: async () => {
+      const error = new Error('Jira rate-limited this export (HTTP 429)');
+      error.rateLimited = true;
+      throw error;
+    },
+  };
+
+  // Markdown already on disk is valid, so attachments stay best-effort even
+  // under throttling - but the summary has to say why the run came out thin.
+  const stats = await downloadAttachments(
+    [{
+      issue: {
+        key: 'PROJ-5',
+        fields: { attachment: [{ id: '1', filename: 'a.png', size: 10, content: 'https://jira.example/c/1' }] },
+      },
+      filePath,
+      dir: tmpDir,
+    }],
+    client,
+    25
+  );
+
+  assert.deepEqual(stats, { downloaded: 0, skipped: 0, failed: 1, rateLimited: 1 });
+  // The placeholder falls back to a URL a logged-in reader can still open.
+  assert.match(fs.readFileSync(filePath, 'utf8'), /\(https:\/\/jira\.example\/c\/1\)/);
 });

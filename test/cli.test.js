@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { parseIssueRef } = require('../src/cli.js');
+const { parseIssueRef, describeIssueFetchError } = require('../src/cli.js');
 
 const SCRIPT = path.join(__dirname, '..', 'export-issues.js');
 
@@ -77,4 +77,26 @@ test('more than one argument exits 1 without touching the output directory', () 
   assert.match(stderr, /Expected at most one issue key or URL/);
   assert.match(stderr, /Usage: node export-issues\.js/);
   assert.equal(fs.existsSync(outputDir), false);
+});
+
+test('describeIssueFetchError rewrites an ordinary refusal into advice', () => {
+  const error = Object.assign(new Error('Failed to fetch ABC-1: 404'), { status: 404 });
+
+  const described = describeIssueFetchError(error, 'ABC-1');
+
+  assert.match(described.message, /Could not fetch ABC-1 \(404\)/);
+  assert.match(described.message, /check the key and that you have access/);
+});
+
+test('describeIssueFetchError passes a rate-limit error through untouched', () => {
+  const error = Object.assign(new Error('Jira rate-limited this export'), {
+    status: 429,
+    rateLimited: true,
+  });
+
+  // "Check the key" is the wrong advice for a throttle - the key is fine.
+  const described = describeIssueFetchError(error, 'ABC-1');
+
+  assert.equal(described, error);
+  assert.doesNotMatch(described.message, /check the key/);
 });

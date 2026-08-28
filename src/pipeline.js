@@ -24,7 +24,7 @@ function prepareOutputDir(dir) {
   return resolved;
 }
 
-async function generateMarkdown(issues, page) {
+async function generateMarkdown(issues, client) {
   prepareOutputDir(OUTPUT_DIR);
 
   // Build issues map for quick lookup
@@ -57,8 +57,8 @@ async function generateMarkdown(issues, page) {
 
   // Inline media is resolved either way: with DOWNLOAD_ATTACHMENTS off, only
   // the attachments a Markdown file actually references are fetched.
-  if (page) {
-    await downloadAttachments(writes, page, MAX_ATTACHMENT_MB, {
+  if (client) {
+    await downloadAttachments(writes, client, MAX_ATTACHMENT_MB, {
       downloadAll: DOWNLOAD_ATTACHMENTS,
     });
   }

@@ -1,6 +1,6 @@
 const { JQL } = require('./config.js');
 
-async function searchIssues(page, jiraUrl, fieldsString, jql = JQL) {
+async function searchIssues(client, jiraUrl, fieldsString, jql = JQL) {
   const issues = [];
   let nextPageToken;
 
@@ -12,7 +12,7 @@ async function searchIssues(page, jiraUrl, fieldsString, jql = JQL) {
     });
     if (nextPageToken) params.set('nextPageToken', nextPageToken);
     const url = `${jiraUrl}/rest/api/3/search/jql?${params.toString()}`;
-    const response = await page.request.get(
+    const response = await client.get(
       url,
       {
         headers: {
@@ -40,10 +40,10 @@ async function searchIssues(page, jiraUrl, fieldsString, jql = JQL) {
 
 // Fetch one issue by key. Throws on a non-OK response, with the HTTP status attached
 // as `error.status` so callers can distinguish an API refusal from a network failure.
-async function fetchIssue(page, jiraUrl, key, fieldsString) {
+async function fetchIssue(client, jiraUrl, key, fieldsString) {
   const params = new URLSearchParams({ fields: fieldsString });
   const url = `${jiraUrl}/rest/api/3/issue/${encodeURIComponent(key)}?${params.toString()}`;
-  const response = await page.request.get(
+  const response = await client.get(
     url,
     {
       headers: {
@@ -61,7 +61,7 @@ async function fetchIssue(page, jiraUrl, key, fieldsString) {
   return response.json();
 }
 
-async function fetchAllParentIssues(issues, page, jiraUrl, fieldsString) {
+async function fetchAllParentIssues(issues, client, jiraUrl, fieldsString) {
   const processedKeys = new Set();
   const allIssuesMap = new Map();
 
@@ -83,12 +83,17 @@ async function fetchAllParentIssues(issues, page, jiraUrl, fieldsString) {
       console.log(`[*] Fetching parent: ${parentKey}`);
 
       try {
-        const parentIssue = await fetchIssue(page, jiraUrl, parentKey, fieldsString);
+        const parentIssue = await fetchIssue(client, jiraUrl, parentKey, fieldsString);
         processedKeys.add(parentKey);
         allIssuesMap.set(parentKey, parentIssue);
         queue.push(parentIssue);
         console.log(`[+] Fetched: ${parentKey}`);
       } catch (error) {
+        // Being throttled is not the same as being refused. Treating it like a
+        // missing parent would quietly reparent the child to the top level and
+        // ship a wrong hierarchy, so it aborts the export instead.
+        if (error.rateLimited) throw error;
+
         // A parent we cannot reach is not fatal: the child is exported at top level.
         if (error.status) {
           console.log(`[-] Failed to fetch ${parentKey}: ${error.status}`);

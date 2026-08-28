@@ -201,6 +201,7 @@ Set in `.env`. Only `JIRA_URL` really needs a value.
 | `JIRA_STATE_FILE` | `.jira-session.json` | Playwright storage-state path; empty value disables session reuse |
 | `JIRA_DOWNLOAD_ATTACHMENTS` | `0` | `1` downloads every attachment; any other value, inline media only |
 | `JIRA_MAX_ATTACHMENT_MB` | `25` | Attachments larger than this are skipped |
+| `JIRA_MAX_RETRIES` | `4` | Retries after the first attempt when Jira rate-limits a request (0-10) |
 
 `OUTPUT_DIR` is refused if it resolves to the filesystem root, your home
 directory, the current working directory, or the repository checkout.
@@ -268,7 +269,7 @@ unrecognised inline node renders as nothing.
 Most Jira Cloud instances sit behind corporate SSO, where issuing a personal API
 token is either awkward or disallowed. Playwright sidesteps that: it opens a
 real browser, you authenticate however your organisation expects, and the REST
-calls are then made through `page.request.get()` on that authenticated context.
+calls are then made through that authenticated context.
 The tool never sees a password, and there is no credential to configure beyond
 the instance URL.
 
@@ -291,6 +292,9 @@ valid, later runs launch headless and never prompt.
 6. **ADF conversion** — happens during step 4, recursively converting Atlassian
    Document Format blocks, inline nodes, and marks.
 
+Every request in steps 1-5 goes through one client that handles rate limiting;
+see below.
+
 ### Why the folder tree mirrors the hierarchy
 
 Path is the cheapest way to express parentage in plain files: an epic's story is
@@ -302,6 +306,28 @@ target was not part of the export.
 
 An issue whose parent could not be fetched is not dropped. It is exported as its
 own top-level subtree, and the run logs which parent was missing.
+
+### How rate limiting is handled
+
+Requests are already made one at a time — the exporter never has two in flight —
+so there is no fixed delay to slow down a healthy run. What it does instead is
+react. A `429` or `503` is retried, waiting as long as Jira's `Retry-After`
+header asks for, or an exponentially growing delay with jitter when there is no
+such header. `JIRA_MAX_RETRIES` bounds how many times.
+
+Being throttled once also makes the export slow itself down: a pacing delay is
+inserted before every later request and decays back to zero over several clean
+responses. So a run that hits a limit backs off as a whole rather than sprinting
+straight back into it.
+
+Two deliberate limits. A `Retry-After` asking for more than two minutes is
+refused outright rather than holding a browser open that long. And if retries
+run out while fetching a *parent* issue, the export stops with exit code 1
+instead of continuing — a throttled parent would otherwise be indistinguishable
+from a genuinely missing one, and the issue would be silently re-rooted at the
+top level, producing a wrong hierarchy that looks perfectly normal. Attachments
+are the exception: they stay best-effort, since the Markdown is already written
+and the placeholder falls back to a working Jira URL.
 
 ### Why attachment matching is fuzzy
 

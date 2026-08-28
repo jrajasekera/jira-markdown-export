@@ -4,18 +4,27 @@ const { JIRA_URL, OUTPUT_DIR, STATE_FILE, ISSUE_FIELDS } = require('./src/config
 const { hasValidSession, waitForUserInput } = require('./src/session.js');
 const { searchIssues, fetchIssue, fetchAllParentIssues } = require('./src/jira-client.js');
 const { generateMarkdown } = require('./src/pipeline.js');
-const { parseIssueRef } = require('./src/cli.js');
+const { parseIssueRef, describeIssueFetchError } = require('./src/cli.js');
+const { createJiraClient } = require('./src/http.js');
 
 async function exportJiraIssues({ issueKey } = {}) {
   const canReuse = Boolean(STATE_FILE) && fs.existsSync(STATE_FILE);
+  // Page and client are created together and never separately: every Jira
+  // request goes through the client, so a page without its client would silently
+  // bypass rate-limit handling.
+  async function openPage(browser, contextOptions) {
+    const context = await browser.newContext(contextOptions);
+    const page = await context.newPage();
+    return { context, page, client: createJiraClient(page) };
+  }
+
   let browser = await chromium.launch({ headless: canReuse });
-  let context = await browser.newContext(canReuse ? { storageState: STATE_FILE } : {});
-  let page = await context.newPage();
+  let { context, page, client } = await openPage(browser, canReuse ? { storageState: STATE_FILE } : {});
 
   try {
     console.log('[*] Connecting to Jira...');
 
-    const me = canReuse ? await hasValidSession(page, JIRA_URL) : null;
+    const me = canReuse ? await hasValidSession(client, JIRA_URL) : null;
     if (me) {
       console.log(`[+] Reusing saved session for ${me.displayName}`);
     } else {
@@ -23,8 +32,7 @@ async function exportJiraIssues({ issueKey } = {}) {
         console.log('[-] Saved session is no longer valid; logging in interactively');
         await browser.close();
         browser = await chromium.launch({ headless: false });
-        context = await browser.newContext();
-        page = await context.newPage();
+        ({ context, page, client } = await openPage(browser, {}));
       }
 
       // 1. Open Jira (uses existing SSO session)
@@ -47,22 +55,21 @@ async function exportJiraIssues({ issueKey } = {}) {
     if (issueKey) {
       console.log(`[*] Fetching ${issueKey}...`);
       try {
-        seedIssues = [await fetchIssue(page, JIRA_URL, issueKey, ISSUE_FIELDS)];
+        seedIssues = [await fetchIssue(client, JIRA_URL, issueKey, ISSUE_FIELDS)];
       } catch (error) {
-        const status = error.status ? ` (${error.status})` : '';
-        throw new Error(`Could not fetch ${issueKey}${status} - check the key and that you have access`);
+        throw describeIssueFetchError(error, issueKey);
       }
     } else {
-      seedIssues = await searchIssues(page, JIRA_URL, ISSUE_FIELDS);
+      seedIssues = await searchIssues(client, JIRA_URL, ISSUE_FIELDS);
       console.log(`[+] Found ${seedIssues.length} assigned issues`);
     }
 
     // 3. Fetch all parent issues recursively
-    const allIssues = await fetchAllParentIssues(seedIssues, page, JIRA_URL, ISSUE_FIELDS);
+    const allIssues = await fetchAllParentIssues(seedIssues, client, JIRA_URL, ISSUE_FIELDS);
     console.log(`[+] Total issues with parents: ${allIssues.length}`);
 
     // 4. Generate markdown
-    await generateMarkdown(allIssues, page);
+    await generateMarkdown(allIssues, client);
 
     console.log(`[+] Exported to: ${OUTPUT_DIR}`);
 

@@ -25,6 +25,7 @@ interactive (headed browser + live Jira) and is never a verification gate.
 | 010 | Direction: persist browser session (storageState) | P3 | M | 007 | DONE (Step 6 live verification: not run) |
 | 011 | Direction: configurable query, limits, extra fields | P3 | S–M | 008 | TODO |
 | 012 | Direction: download attachments | P3 | M | 002, 006 | DONE (Step 2 spike skipped by operator; branch-agnostic join — see note) |
+| 013 | Direction: rate-limit backoff and adaptive throttling | P2 | M | 001, 002, 012 | DONE (live 429 not reproduced; stubbed) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 
