@@ -48,7 +48,7 @@ with `test/` organised to match one file per module:
 | `src/attachments.js` | the `attachment:<key>` placeholder syntax, `downloadAttachments` |
 | `src/adf.js` | `descriptionToMd` and the `process*` helpers |
 | `src/render.js` | `generateIssueMd` |
-| `src/layout.js` | `generatePath`, `generateIssueFiles`, `renderIndex`, `isSubtask` |
+| `src/layout.js` | `generatePath`, `generateIssueFiles`, `renderIndex`, `isSubtask`, `issueHref`, `linkResolver` |
 | `src/pipeline.js` | `prepareOutputDir`, `generateMarkdown` |
 
 The dependency graph is acyclic and worth keeping that way:

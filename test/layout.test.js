@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { sanitizeFilename, sanitizeDir } = require('../src/naming.js');
 const {
+  issueHref,
   isSubtask,
   generatePath,
   generateIssueFiles,
@@ -162,8 +163,18 @@ const mdFilesIn = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(
 
 test('all generated relative links resolve to existing files', () => {
   const rootSub = issue('PRJ-9', 'Sub-task', 'Loose end');
-  const linkMap = { ...map, 'PRJ-9': rootSub };
-  const roots = [epic, rootSub];
+  const blocks = { type: { name: 'Blocks', inward: 'is blocked by', outward: 'blocks' } };
+  const linkedStory = { ...story, fields: { ...story.fields, issuelinks: [
+    { ...blocks, outwardIssue: { key: 'PRJ-9', fields: { summary: 'Loose end' } } },
+  ] } };
+  const linkedSub = { ...sub, fields: { ...sub.fields, issuelinks: [
+    { ...blocks, inwardIssue: { key: 'PRJ-1', fields: { summary: 'Big Epic!' } } },
+  ] } };
+  const linkedRootSub = { ...rootSub, fields: { ...rootSub.fields, issuelinks: [
+    { ...blocks, inwardIssue: { key: 'PRJ-3', fields: { summary: 'Do thing' } } },
+  ] } };
+  const linkMap = { ...map, 'PRJ-2': linkedStory, 'PRJ-3': linkedSub, 'PRJ-9': linkedRootSub };
+  const roots = [epic, linkedRootSub];
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-export-links-'));
   try {
@@ -182,7 +193,7 @@ test('all generated relative links resolve to existing files', () => {
         checked++;
       }
     }
-    assert.ok(checked >= 3, `expected at least 3 links, checked ${checked}`);
+    assert.ok(checked >= 6, `expected at least 6 links, checked ${checked}`);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -318,4 +329,47 @@ test('generateIssueFiles exports an orphan subtree without its missing parent', 
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('issueHref returns the root-relative POSIX path of an issue file', () => {
+  assert.equal(issueHref(epic, map), 'PRJ-1-big-epic/_epic.md');
+  assert.equal(issueHref(story, map), 'PRJ-1-big-epic/PRJ-2-a-story/_story.md');
+  assert.equal(issueHref(sub, map), 'PRJ-1-big-epic/PRJ-2-a-story/PRJ-3-do-thing.md');
+});
+
+const blocksType = { name: 'Blocks', inward: 'is blocked by', outward: 'blocks' };
+const withLinks = (base, issuelinks) => ({ ...base, fields: { ...base.fields, issuelinks } });
+
+test('generateIssueMd renders link direction, summary, and relative link', () => {
+  const linked = withLinks(story, [
+    { type: blocksType, outwardIssue: { key: 'PRJ-3', fields: { summary: 'Do thing' } } },
+    { type: blocksType, inwardIssue: { key: 'PRJ-1', fields: { summary: 'Big Epic!' } } },
+  ]);
+  const linkTo = key => ({ 'PRJ-3': 'PRJ-3-do-thing.md', 'PRJ-1': '../_epic.md' })[key];
+  const md = generateIssueMd(linked, epic, false, linkTo);
+  assert.match(md, /## Related Issues\n- blocks \[PRJ-3 – Do thing\]\(PRJ-3-do-thing.md\)\n- is blocked by \[PRJ-1 – Big Epic!\]\(\.\.\/_epic\.md\)/);
+});
+
+test('generateIssueMd renders unexported link targets as plain text', () => {
+  const linked = withLinks(story, [
+    { type: blocksType, outwardIssue: { key: 'OTHER-1', fields: { summary: 'Elsewhere' } } },
+  ]);
+  const md = generateIssueMd(linked, undefined, false);
+  assert.match(md, /- blocks OTHER-1 – Elsewhere$/);
+  assert.doesNotMatch(md, /OTHER-1[^\n]*\]\(/);
+});
+
+test('generateIssueMd tolerates malformed issue links', () => {
+  const linked = withLinks(story, [
+    { type: { name: 'Relates' }, outwardIssue: { key: 'X-1', fields: { summary: 'No verbs' } } },
+    { outwardIssue: { key: 'X-2' } },
+    { type: blocksType },
+    { type: blocksType, inwardIssue: { key: 'X-3', fields: { summary: 'A [weird] one\nwith newline' } } },
+  ]);
+  const md = generateIssueMd(linked, undefined, false);
+  assert.match(md, /- Relates X-1 – No verbs\n/m);
+  assert.match(md, /- relates to X-2\n/);
+  assert.match(md, /- is blocked by X-3 – A \\\[weird\\\] one with newline/);
+  assert.doesNotMatch(md, /undefined/);
+  assert.equal((md.match(/^- /gm) || []).length, 4);
 });

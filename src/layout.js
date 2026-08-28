@@ -3,13 +3,28 @@ const path = require('path');
 const { sanitizeDir, sanitizeFilename, infoFilename } = require('./naming.js');
 const { generateIssueMd } = require('./render.js');
 
-// Path of an issue's Markdown file, relative to the output root.
-function indexHref(issue, allIssuesMap) {
-  if (generatePath(issue, allIssuesMap).isFile) {
-    return `${sanitizeFilename(issue.key, issue.fields.summary)}.md`;
-  }
-  const type = issue.fields.issuetype?.name || 'Unknown';
-  return `${issue.key}-${sanitizeDir(issue.fields.summary)}/${infoFilename(type)}`;
+// POSIX path of an issue's Markdown file, relative to the export root.
+// Filesystem writes use the platform-native `path`; this is for links only.
+function issueHref(issue, allIssuesMap) {
+  const { path: chain, isFile } = generatePath(issue, allIssuesMap);
+  const folders = (isFile ? chain.slice(0, -1) : chain)
+    .map(item => `${item.key}-${sanitizeDir(item.summary)}`);
+  const last = chain[chain.length - 1];
+  const file = isFile
+    ? `${sanitizeFilename(last.key, last.summary)}.md`
+    : infoFilename(last.type);
+  return [...folders, file].join('/');
+}
+
+// Resolves an issue key to a link relative to `fromIssue`'s file, or
+// undefined when the target is not part of the export.
+function linkResolver(fromIssue, allIssuesMap) {
+  const fromDir = path.posix.dirname(issueHref(fromIssue, allIssuesMap));
+  return key => {
+    const target = allIssuesMap[key];
+    if (!target) return undefined;
+    return path.posix.relative(fromDir, issueHref(target, allIssuesMap));
+  };
 }
 
 function renderIndex(issues, rootIssues, allIssuesMap) {
@@ -23,7 +38,7 @@ function renderIndex(issues, rootIssues, allIssuesMap) {
 
 ${rootIssues.map(issue => {
   const type = issue.fields.issuetype?.name || 'Unknown';
-  return `- [${type}: ${issue.key} - ${issue.fields.summary}](${indexHref(issue, allIssuesMap)})`;
+  return `- [${type}: ${issue.key} - ${issue.fields.summary}](${issueHref(issue, allIssuesMap)})`;
 }).join('\n')}
 `;
 }
@@ -81,7 +96,7 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = nul
       if (issueData) {
         const parentIssue = allIssuesMap[issueData.fields.parent?.key];
         const filePath = path.join(currentDir, infoFilename(pathItem.type));
-        fs.writeFileSync(filePath, generateIssueMd(issueData, parentIssue, false));
+        fs.writeFileSync(filePath, generateIssueMd(issueData, parentIssue, false, linkResolver(issueData, allIssuesMap)));
         recordWrite(writes, issueData, filePath, currentDir);
       }
     }
@@ -92,7 +107,7 @@ function generateIssueFiles(issue, pathInfo, baseDir, allIssuesMap, writes = nul
     const filename = sanitizeFilename(issue.key, issue.fields.summary) + '.md';
     const parentIssue = allIssuesMap[issue.fields.parent?.key];
     const filePath = path.join(currentDir, filename);
-    fs.writeFileSync(filePath, generateIssueMd(issue, parentIssue, true));
+    fs.writeFileSync(filePath, generateIssueMd(issue, parentIssue, true, linkResolver(issue, allIssuesMap)));
     recordWrite(writes, issue, filePath, currentDir);
   }
 
@@ -116,6 +131,7 @@ function recordWrite(writes, issue, filePath, dir) {
 }
 
 module.exports = {
+  issueHref,
   isSubtask,
   generatePath,
   generateIssueFiles,

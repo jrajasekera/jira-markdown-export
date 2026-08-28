@@ -1,7 +1,23 @@
 const { descriptionToMd } = require('./adf.js');
 const { infoFilename } = require('./naming.js');
 
-function generateIssueMd(issue, parentIssue, isFile) {
+// Jira summaries are free text; keep them from breaking link syntax.
+function linkText(text) {
+  return String(text).replace(/[\\[\]]/g, '\\$&').replace(/\s*\n\s*/g, ' ');
+}
+
+function renderIssueLink(link, linkTo) {
+  const target = link.outwardIssue || link.inwardIssue;
+  if (!target?.key) return null;
+  const verb = (link.outwardIssue ? link.type?.outward : link.type?.inward)
+    || link.type?.name || 'relates to';
+  const summary = target.fields?.summary;
+  const label = linkText(summary ? `${target.key} – ${summary}` : target.key);
+  const href = linkTo(target.key);
+  return `- ${verb} ${href ? `[${label}](${href})` : label}`;
+}
+
+function generateIssueMd(issue, parentIssue, isFile, linkTo = () => undefined) {
   const { key, fields } = issue;
   const {
     summary,
@@ -22,11 +38,13 @@ function generateIssueMd(issue, parentIssue, isFile) {
   let parentInfo = '';
   if (parent && parentIssue) {
     const href = infoFilename(parentIssue.fields.issuetype?.name);
-    parentInfo = `\n**Parent:** [${parent.key} - ${parentIssue.fields.summary}](${isFile ? href : `../${href}`})`;
+    parentInfo = `\n**Parent:** [${linkText(`${parent.key} - ${parentIssue.fields.summary}`)}](${isFile ? href : `../${href}`})`;
   } else if (parent) {
     // Parent was not exported, so there is nothing to link to.
     parentInfo = `\n**Parent:** ${parent.key}`;
   }
+
+  const relatedIssues = issuelinks.map(l => renderIssueLink(l, linkTo)).filter(Boolean);
 
   let content = `# ${key} - ${summary}
 
@@ -38,7 +56,7 @@ ${description?.content ? descriptionToMd(description.content) : 'No description'
 
 ## Metadata
 - **Updated:** ${new Date(updated).toISOString().split('T')[0]}
-${issuelinks.length > 0 ? `\n## Related Issues\n${issuelinks.map(l => `- ${l.outwardIssue?.key || l.inwardIssue?.key}: ${l.type?.name}`).join('\n')}` : ''}`;
+${relatedIssues.length > 0 ? `\n## Related Issues\n${relatedIssues.join('\n')}` : ''}`;
 
   // Add comments if available
   if (comment.comments && comment.comments.length > 0) {
