@@ -1,209 +1,325 @@
 # Jira Markdown Export
 
-Export Jira issues to Markdown format using Playwright and authenticated browser session. Generates a hierarchical folder structure based on issue parent-child relationships (Epic > Story > Task > Sub-task).
+Export Jira Cloud issues to a folder tree of Markdown files, using your own
+browser login instead of an API token.
 
-## Features
+You run one command, log in to Jira in the browser window that opens, and get a
+directory that mirrors your issue hierarchy:
 
-- Exports all assigned Jira issues with their complete hierarchy
-- Recursively fetches parent issues to build the full context
-- Generates organized folder structure: `Epic/Story/Task/Sub-task.md`
-- Converts Jira ADF (Atlassian Document Format) to clean Markdown
-- Handles text formatting (bold, italic, code, strikethrough)
-- Preserves issue metadata (status, priority, assignee, dates)
-- Includes issue comments in exported Markdown
-- Works with OAuth/SSO authentication through browser session
-- Playwright-based approach - uses authenticated browser context for API calls
+```
+exported-issues/
+├── index.md
+└── PROJ-1-checkout-rewrite/
+    ├── _epic.md
+    └── PROJ-8-guest-checkout/
+        ├── _story.md
+        └── PROJ-12-add-address-form.md
+```
 
-## Installation
+Each file holds the issue's description, metadata, linked issues, and comments,
+converted from Atlassian Document Format to Markdown. Inline images are
+downloaded so nothing links back to a Jira URL you need to be logged in to read.
 
-1. Clone the repository:
+- [Getting started](#getting-started) — first export, start to finish
+- [How-to guides](#how-to-guides) — specific tasks
+- [Reference](#reference) — settings, output format, CLI
+- [How it works](#how-it-works) — the pipeline and its design choices
+
+## Getting started
+
+You need Node.js 20+ and a Jira Cloud account you can log into in a browser.
+
+**1. Install.**
+
 ```bash
 git clone https://github.com/LeeShan87/jira-markdown-export.git
 cd jira-markdown-export
-```
-
-2. Install dependencies:
-```bash
 npm install
 npx playwright install
 ```
 
-3. Configure your Jira instance:
+**2. Point it at your Jira.**
+
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set your Jira URL:
+Edit `.env` and set your instance URL:
+
 ```env
 JIRA_URL=https://your-instance.atlassian.net
 OUTPUT_DIR=./exported-issues
 ```
 
-## Usage
+**3. Run the export.**
 
-1. Run the export script:
 ```bash
 npm run export
 ```
 
-2. A browser window will open. Log in to your Jira instance using SSO/OAuth if needed
-3. Once authenticated, press ENTER in the terminal
-4. The script will fetch all your assigned issues and generate the Markdown files
-5. Check the `exported-issues/` folder for the results
+A Chromium window opens on your Jira instance. Log in — SSO, OAuth, whatever
+your organisation uses — then return to the terminal and press **Enter**.
+
+**4. Watch it work.** The terminal reports each stage:
+
+```
+[*] Connecting to Jira...
+[*] Fetching issues...
+[+] Found 23 assigned issues
+[+] Total issues with parents: 31
+[*] Processing 4 root issues...
+[+] Exported to: ./exported-issues
+```
+
+**5. Read the results.** Open `exported-issues/index.md`. It lists every
+top-level issue with a relative link into the tree, so the whole export is
+browsable in any Markdown editor.
+
+By default this exports the issues assigned to you. From here, see the how-to
+guides for exporting something else.
+
+## How-to guides
 
 ### Export a single issue
 
-Pass an issue key or a Jira URL to export just that card and its parent chain
-(Epic → Story → Task), skipping the JQL search entirely:
+Pass an issue key or a Jira URL to export just that card and its parent chain,
+skipping the JQL search:
 
 ```bash
 npm run export -- ABC-123
 npm run export -- "https://your-instance.atlassian.net/browse/ABC-123"
 ```
 
-Board and backlog URLs work too, as long as they carry the key in a
-`selectedIssue` or `issueKey` query parameter. The `--` is required so npm
-passes the argument through to the script; `node export-issues.js ABC-123`
-works without it.
+Board and backlog URLs work too, as long as the key is in a `selectedIssue` or
+`issueKey` query parameter. The `--` is what makes npm pass the argument
+through; `node export-issues.js ABC-123` needs no such separator.
 
-Sub-tasks and other children of the named card are *not* fetched — only the
-card itself and its ancestors. As with a full export, a successful run replaces
-the contents of `OUTPUT_DIR`; a bad key or a failed login leaves the previous
-export untouched.
+Only the named card and its ancestors are fetched — its sub-tasks and other
+children are not.
 
-### Reusing your login
+### Change which issues are exported
 
-After a successful login the tool saves the browser session to
-`.jira-session.json` (gitignored). On later runs it checks that session first;
-if it is still valid the export runs headless with no prompt. If it has
-expired you are asked to log in again and the file is refreshed.
-
-- This file is a credential — treat it like a password and never commit it.
-- To always log in interactively, set `JIRA_STATE_FILE=` (empty) in `.env`.
-- If the tool errors while loading the file, delete it and rerun.
-
-## Output Structure
-
-```
-exported-issues/
-├── index.md                          # Summary of all exported issues
-├── EPIC-1-name/
-│   ├── _epic.md                      # Epic description and metadata
-│   ├── STORY-1-name/
-│   │   ├── _story.md                 # Story description
-│   │   └── TASK-1-name/
-│   │       ├── _task.md              # Task description
-│   │       ├── SUBTASK-1-name.md     # Sub-task (as file, not folder)
-│   │       └── SUBTASK-2-name.md
-│   └── TASK-2-name/                  # Task directly under Epic
-│       └── _task.md
-└── TASK-3-name/                      # Root-level task (no parent)
-    └── _task.md
-```
-
-Each folder is named with the issue key and a sanitized summary, e.g., `ASDF1234-12345-example-issue/`
-
-## Configuration
-
-### Customize JQL Query
-
-Set `JIRA_JQL` in `.env` to change what issues are exported. It defaults to
-`assignee = currentUser()`.
+Set `JIRA_JQL` in `.env`. It defaults to `assignee = currentUser()`.
 
 ```bash
-# JIRA_JQL=reporter = currentUser()                        # Issues you created
-# JIRA_JQL=assignee = currentUser() AND status != Done     # Active issues only
-# JIRA_JQL=project = MYPROJECT                             # Specific project
+JIRA_JQL=reporter = currentUser()                      # issues you created
+JIRA_JQL=assignee = currentUser() AND status != Done   # active work only
+JIRA_JQL=project = MYPROJECT                           # a whole project
 ```
 
-The JQL is ignored when you pass a single issue key or URL on the command line.
+Parents of matched issues are always fetched as well, even when the JQL itself
+does not select them, so the hierarchy is never broken.
 
-### Add Custom Fields
+The JQL is ignored when you name a single issue on the command line.
 
-If you need additional Jira fields in the export, add them to the `ISSUE_FIELDS` array in `src/config.js`:
+### Download all attachments, not just images
 
-```javascript
-const ISSUE_FIELDS = [
-  'summary',
-  'description',
-  'status',
-  // Add more fields here...
-  'customfield_10000'  // Add custom field ID
-].join(',');
-```
-
-A new field is only fetched at that point — to make it appear in the generated
-Markdown, also render it in `generateIssueMd` (`src/render.js`).
-
-### Attachments
-
-Images embedded in a description or comment are always resolved: the exporter
-scans the generated Markdown for inline attachment placeholders and downloads
-the files they reference, so an export never leaves a broken image link behind.
-
-`JIRA_DOWNLOAD_ATTACHMENTS` controls the *whole* attachment set — every file on
-an issue, including ones nothing links to — and is **off** by default:
+Images embedded in descriptions and comments are always downloaded. To also get
+every other file attached to an issue, set in `.env`:
 
 ```bash
-JIRA_DOWNLOAD_ATTACHMENTS=1   # 1 = download every attachment, anything else = inline media only
-JIRA_MAX_ATTACHMENT_MB=25     # skip anything larger (default 25)
+JIRA_DOWNLOAD_ATTACHMENTS=1
+JIRA_MAX_ATTACHMENT_MB=25   # skip anything larger
 ```
 
-Downloaded attachments are written next to the issue's Markdown file:
+Files land next to the issue's Markdown, and the Markdown gains an
+`## Attachments` section linking each one:
 
 ```
 PROJ-1-my-epic/
 ├── _epic.md
 └── attachments/
-    └── 10042-screenshot.png     # <REST id>-<sanitized name>.<ext>
+    └── 10042-screenshot.png
 ```
 
-With the full export on, the Markdown file also gets an `## Attachments` section
-linking every file that downloaded. Inline placeholders are rewritten to the
-local copy in either mode.
+### Add a Jira field to the export
 
-Jira's ADF description references images by an Atlassian *media services* UUID,
-which is not the same identifier as the REST attachment id. The exporter matches
-a placeholder against the attachment's REST id, its filename, the image's alt
-text, and any UUID-shaped field on the attachment record. A placeholder whose
-attachment was skipped for size or failed to download falls back to the original
-Jira URL, which still resolves for a logged-in reader; one that matches no
-attachment at all is left as `attachment:<id>` rather than dropped.
+Two edits, both required — the first fetches the field, the second renders it.
 
-Attachments referenced only from comment bodies are handled the same way.
+1. Add the field ID to `ISSUE_FIELDS` in `src/config.js`:
 
-## How It Works
+   ```javascript
+   const ISSUE_FIELDS = [
+     'summary',
+     'description',
+     // ...
+     'customfield_10000',
+   ].join(',');
+   ```
 
-1. **Authentication**: Playwright launches a browser and you log in via SSO
-2. **Issue Discovery**: Fetches all issues matching the JQL query (default: assigned to you)
-3. **Hierarchy Building**: Recursively fetches all parent issues to build complete context chains
-4. **Path Generation**: Each issue's path is determined by its full parent chain (Epic > Story > Task)
-5. **File Generation**: Creates the folder structure and converts Jira ADF to Markdown
-6. **Markdown Conversion**:
-   - Handles paragraphs, headings, lists (ordered/unordered)
-   - Preserves text formatting (bold, italic, code blocks)
-   - Converts Jira links to Markdown link syntax
-   - Includes comments with author and date
+2. Add it to the output in `generateIssueMd` in `src/render.js`.
 
-## Playwright Concepts
+### Log in again, or stop saving the session
 
-This project demonstrates several Playwright features:
+After a successful login the browser session is saved to `.jira-session.json`
+(gitignored). Later runs reuse it and run headless with no prompt; when it
+expires you are asked to log in again and the file is refreshed.
 
-- `chromium.launch()` - Launch browser instance
-- `browser.newContext()` - Create isolated browser context with cookies/storage
-- `page.goto()` - Navigate to pages
-- `page.request.get()` - Make HTTP requests using authenticated session
-- Browser automation with interactive waits
+- To force an interactive login every time, set `JIRA_STATE_FILE=` (empty) in `.env`.
+- If a run errors while loading the file, delete it and rerun.
+- Treat the file as a credential. It grants access to your Jira account — never
+  commit it or share it.
 
-## Requirements
+### Run the tests
 
-- Node.js 20+
-- Jira Cloud instance with REST API access
-- OAuth/SSO authentication configured in Jira
+```bash
+npm test
+```
+
+The suite uses Node's built-in test runner and makes no network calls, so it is
+safe to run at any time. There is no build or lint step.
+
+## Reference
+
+### Requirements
+
+- Node.js 20 or newer
+- A Jira Cloud instance with REST API access
+- Browser-based authentication (OAuth/SSO or password) for that instance
+
+### Commands
+
+| Command | Effect |
+|---|---|
+| `npm run export` | Export every issue matching `JIRA_JQL`, plus their ancestors |
+| `npm run export -- <KEY\|URL>` | Export one issue and its ancestors |
+| `npm test` | Run the test suite |
+
+An export **replaces the entire contents of `OUTPUT_DIR`**. A bad issue key,
+invalid CLI input, or a failed login stops the run before anything is deleted.
+Errors set exit code 1.
+
+### Environment variables
+
+Set in `.env`. Only `JIRA_URL` really needs a value.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `JIRA_URL` | `https://your-instance.atlassian.net` | Base URL of the Jira Cloud instance |
+| `OUTPUT_DIR` | `./exported-issues` | Directory the export is written to; cleared on each run |
+| `JIRA_JQL` | `assignee = currentUser()` | Query selecting the seed issues |
+| `JIRA_STATE_FILE` | `.jira-session.json` | Playwright storage-state path; empty value disables session reuse |
+| `JIRA_DOWNLOAD_ATTACHMENTS` | `0` | `1` downloads every attachment; any other value, inline media only |
+| `JIRA_MAX_ATTACHMENT_MB` | `25` | Attachments larger than this are skipped |
+
+`OUTPUT_DIR` is refused if it resolves to the filesystem root, your home
+directory, the current working directory, or the repository checkout.
+
+### Accepted issue references
+
+- A bare key: `ABC-123` (case-insensitive)
+- `https://<instance>/browse/ABC-123`
+- Any URL with `?selectedIssue=ABC-123` or `?issueKey=ABC-123`
+
+### Output structure
+
+```
+exported-issues/
+├── index.md                          # export date, issue count, root issue links
+├── EPIC-1-name/
+│   ├── _epic.md                      # the epic itself
+│   ├── STORY-1-name/
+│   │   ├── _story.md
+│   │   └── TASK-1-name/
+│   │       ├── _task.md
+│   │       ├── SUBTASK-1-name.md     # sub-tasks are files, not folders
+│   │       └── SUBTASK-2-name.md
+│   └── TASK-2-name/                  # task directly under the epic
+│       └── _task.md
+└── TASK-3-name/                      # root-level task (no parent)
+    └── _task.md
+```
+
+Every issue except a sub-task becomes a directory named
+`<KEY>-<sanitized summary>`, holding an info file named after the issue type
+(`_epic.md`, `_story.md`, `_task.md`). Sub-tasks are single files. Whether an
+issue is a leaf is decided by Jira's `issuetype.subtask` flag; the type name is
+only a fallback.
+
+### Generated issue file
+
+Each Markdown file contains, in order:
+
+| Section | Contents |
+|---|---|
+| Heading | `# KEY - summary` |
+| Metadata line | type, status, priority, assignee, created date |
+| `**Parent:**` | link to the parent's file, or the bare key if the parent was not exported |
+| `## Description` | the ADF description as Markdown, or `No description` |
+| `## Metadata` | updated date |
+| `## Related Issues` | issue links, each with its direction ("blocks", "relates to", …), the target's key and summary, and a relative link when that issue is in the export |
+| `## Comments` | each comment with author, date, and converted body |
+| `## Attachments` | only when `JIRA_DOWNLOAD_ATTACHMENTS=1` |
+
+### Supported ADF nodes
+
+Converted: paragraphs, headings, bullet and ordered lists, task lists, tables,
+code blocks, block quotes, panels, expands, rules, hard breaks, inline cards,
+mentions, dates, emoji, status lozenges, media, and the text marks for bold,
+italic, code, strikethrough, underline, super/subscript, text colour, and links.
+
+An unrecognised block-level node leaves a visible marker in the output; an
+unrecognised inline node renders as nothing.
+
+## How it works
+
+### Why a browser instead of an API token
+
+Most Jira Cloud instances sit behind corporate SSO, where issuing a personal API
+token is either awkward or disallowed. Playwright sidesteps that: it opens a
+real browser, you authenticate however your organisation expects, and the REST
+calls are then made through `page.request.get()` on that authenticated context.
+The tool never sees a password, and there is no credential to configure beyond
+the instance URL.
+
+The cost is that the first run is interactive. Saving Playwright's storage state
+to `.jira-session.json` buys back the unattended case: while the session is
+valid, later runs launch headless and never prompt.
+
+### The pipeline
+
+1. **Authentication** — reuse the saved session if it is still valid, otherwise
+   launch a headed browser and wait for you.
+2. **Issue discovery** — page through `/rest/api/3/search/jql` with `JIRA_JQL`,
+   or fetch a single issue when one was named on the command line.
+3. **Hierarchy completion** — walk `fields.parent` breadth-first and fetch any
+   ancestor that the search did not return.
+4. **Layout** — decide each issue's path from its full parent chain, then write
+   `index.md` and the issue tree.
+5. **Attachments** — scan the generated Markdown for attachment placeholders and
+   download what it references, rewriting the links to the local copies.
+6. **ADF conversion** — happens during step 4, recursively converting Atlassian
+   Document Format blocks, inline nodes, and marks.
+
+### Why the folder tree mirrors the hierarchy
+
+Path is the cheapest way to express parentage in plain files: an epic's story is
+literally inside the epic. That makes the export navigable in a file browser, an
+editor, or a note-taking app that follows relative links, with no index to keep
+in sync. Cross-issue links — parent links and issue links alike — are written as
+relative paths for the same reason, and resolve to nothing (plain text) when the
+target was not part of the export.
+
+An issue whose parent could not be fetched is not dropped. It is exported as its
+own top-level subtree, and the run logs which parent was missing.
+
+### Why attachment matching is fuzzy
+
+Jira's ADF references an embedded image by an Atlassian *media services* UUID,
+which is not the REST attachment id — the two live in different systems and
+there is no reliable mapping in the issue payload. So a placeholder is matched
+against several candidates: the attachment's REST id, its filename, the image's
+alt text, and any UUID-shaped field on the attachment record.
+
+Matching is therefore best-effort, and it degrades rather than fails. A
+placeholder whose attachment was skipped for size or failed to download falls
+back to the original Jira URL, which still resolves for a logged-in reader. One
+that matches no attachment at all stays visible as `attachment:<id>` instead of
+disappearing.
 
 ## License
 
-MIT - See LICENSE file for details
+MIT — see the LICENSE file.
 
 ## Contributing
 
