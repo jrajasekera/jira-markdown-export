@@ -190,6 +190,44 @@ test('ambiguous Jira custom field names require an explicit override', async () 
 
   await assert.rejects(
     () => resolveCustomFieldIds(client, JIRA, {}),
-    /Multiple Jira custom fields match Sprint; set JIRA_SPRINT_FIELD_ID/
+    /Multiple Jira custom fields match Sprint[\s\S]*customfield_1 — Sprint: \(value unavailable\)[\s\S]*JIRA_SPRINT_FIELD_ID=customfield_<number>/
+  );
+});
+
+test('ambiguous custom fields include their IDs and values for the requested issue', async () => {
+  const client = {
+    async get(url) {
+      if (url === `${JIRA}/rest/api/3/field`) {
+        return {
+          ok: () => true,
+          status: () => 200,
+          json: async () => [
+            { id: 'customfield_10016', name: 'Story Points' },
+            { id: 'customfield_10028', name: 'Story point estimate' },
+          ],
+        };
+      }
+      assert.match(url, /\/issue\/VP-19571\?fields=customfield_10016%2Ccustomfield_10028$/);
+      return {
+        ok: () => true,
+        status: () => 200,
+        json: async () => ({
+          fields: {
+            customfield_10016: 5,
+            customfield_10028: null,
+          },
+        }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => resolveCustomFieldIds(client, JIRA, {}, { issueKeys: ['VP-19571'] }),
+    (error) => {
+      assert.match(error.message, /customfield_10016 — Story Points: 5/);
+      assert.match(error.message, /customfield_10028 — Story point estimate: null/);
+      assert.match(error.message, /JIRA_STORY_POINTS_FIELD_ID=customfield_<number>/);
+      return true;
+    },
   );
 });

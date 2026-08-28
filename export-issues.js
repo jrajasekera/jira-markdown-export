@@ -62,7 +62,9 @@ async function exportJiraIssues({ issueKey, issueKeys, jql } = {}) {
 
     console.log('[*] Fetching issues...');
 
-    const customFields = await resolveCustomFieldIds(client, JIRA_URL, CUSTOM_FIELD_OVERRIDES);
+    const customFields = await resolveCustomFieldIds(client, JIRA_URL, CUSTOM_FIELD_OVERRIDES, {
+      issueKeys: requestedIssueKeys,
+    });
     const issueFields = buildIssueFields(customFields);
     const missingFields = Object.entries(customFields)
       .filter(([, id]) => !id)

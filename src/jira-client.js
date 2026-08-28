@@ -17,7 +17,40 @@ function matchingCustomFields(fields, names) {
 // Jira's field IDs are installation-specific. Resolve only the fields that
 // were not explicitly configured. A duplicate display name is unsafe to guess;
 // the caller gets an actionable error naming the override to set.
-async function resolveCustomFieldIds(client, jiraUrl, overrides = {}) {
+function diagnosticFieldValue(value) {
+  if (value === undefined) return '(not returned)';
+  const rendered = JSON.stringify(value);
+  return rendered === undefined ? String(value) : rendered.slice(0, 300);
+}
+
+async function ambiguousFieldError(client, jiraUrl, name, matches, issueKeys = []) {
+  const envName = `JIRA_${name.replace(/([A-Z])/g, '_$1').toUpperCase()}_FIELD_ID`;
+  const issueKey = issueKeys[0];
+  let values;
+
+  if (issueKey) {
+    try {
+      const issue = await fetchIssue(client, jiraUrl, issueKey, matches.map(field => field.id).join(','));
+      values = issue.fields || {};
+    } catch {
+      // Field selection must remain actionable even if Jira refuses the
+      // optional diagnostic lookup.
+    }
+  }
+
+  const choices = matches.map(field => {
+    const value = values ? diagnosticFieldValue(values[field.id]) : '(value unavailable)';
+    return `  - ${field.id} — ${field.name}: ${value}`;
+  });
+  const scope = issueKey ? ` Values shown are from ${issueKey}.` : '';
+  return new Error([
+    `Multiple Jira custom fields match ${CUSTOM_FIELD_NAMES[name].join(' or ')}.${scope}`,
+    ...choices,
+    `Set one choice in .env, for example: ${envName}=customfield_<number>`,
+  ].join('\n'));
+}
+
+async function resolveCustomFieldIds(client, jiraUrl, overrides = {}, { issueKeys = [] } = {}) {
   const unresolved = Object.keys(CUSTOM_FIELD_NAMES).filter(name => !overrides[name]);
   if (unresolved.length === 0) return { ...overrides };
 
@@ -39,8 +72,7 @@ async function resolveCustomFieldIds(client, jiraUrl, overrides = {}) {
   for (const name of unresolved) {
     const matches = matchingCustomFields(fields, CUSTOM_FIELD_NAMES[name]);
     if (matches.length > 1) {
-      const envName = `JIRA_${name.replace(/([A-Z])/g, '_$1').toUpperCase()}_FIELD_ID`;
-      throw new Error(`Multiple Jira custom fields match ${CUSTOM_FIELD_NAMES[name].join(' or ')}; set ${envName}.`);
+      throw await ambiguousFieldError(client, jiraUrl, name, matches, issueKeys);
     }
     if (matches.length === 1) resolved[name] = matches[0].id;
   }
