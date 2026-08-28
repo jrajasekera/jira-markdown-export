@@ -6,6 +6,7 @@ const path = require('path');
 const {
   attachmentFilename,
   attachmentKeys,
+  collectPlaceholderKeys,
   rewriteAttachmentLinks,
   downloadAttachments,
 } = require('../export-issues.js');
@@ -103,11 +104,12 @@ test('downloadAttachments honours the size limit and rewrites the issue file', a
 
   const md = fs.readFileSync(filePath, 'utf8');
   assert.match(md, /!\[small\.png\]\(attachments\/1-small\.png\)/);
-  assert.match(md, /!\[big\.zip\]\(attachment:missing\)/);
+  // Skipped for size, so its placeholder falls back to the Jira URL.
+  assert.match(md, /!\[big\.zip\]\(https:\/\/jira\.example\/rest\/api\/3\/attachment\/content\/2\)/);
   assert.match(md, /## Attachments\n\n- \[small\.png\]\(attachments\/1-small\.png\)/);
 });
 
-test('downloadAttachments logs and skips a failed request without throwing', async (t) => {
+test('downloadAttachments logs a failed request without throwing and falls back to Jira', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-att-'));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -132,5 +134,116 @@ test('downloadAttachments logs and skips a failed request without throwing', asy
   );
 
   assert.deepEqual(stats, { downloaded: 0, skipped: 0, failed: 1 });
-  assert.equal(fs.readFileSync(filePath, 'utf8'), '# PROJ-2\n\n![a.png](attachment:x)\n');
+  assert.equal(
+    fs.readFileSync(filePath, 'utf8'),
+    '# PROJ-2\n\n![a.png](https://jira.example/c/1)\n'
+  );
+});
+
+test('collectPlaceholderKeys returns both the placeholder key and the link text', () => {
+  const keys = collectPlaceholderKeys(
+    `![shot.png](attachment:${UUID})\n[notes](attachment:10042)\n![](attachment:bare)`
+  );
+  assert.deepEqual([...keys].sort(), [UUID, '10042', 'bare', 'notes', 'shot.png'].sort());
+});
+
+test('downloadAttachments fetches only referenced media when downloadAll is off', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-att-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  const inline = {
+    id: '1',
+    filename: 'inline.png',
+    size: 1024,
+    mediaApiFileId: UUID,
+    content: 'https://jira.example/rest/api/3/attachment/content/1',
+  };
+  const unreferenced = {
+    id: '2',
+    filename: 'spec.pdf',
+    size: 2048,
+    content: 'https://jira.example/rest/api/3/attachment/content/2',
+  };
+
+  const filePath = path.join(tmpDir, 'PROJ-3-thing.md');
+  fs.writeFileSync(filePath, `# PROJ-3\n\n![attachment](attachment:${UUID})\n`);
+
+  const requested = [];
+  const page = {
+    request: {
+      get: async (url) => {
+        requested.push(url);
+        return { ok: () => true, status: () => 200, body: async () => Buffer.from('png') };
+      },
+    },
+  };
+
+  const stats = await downloadAttachments(
+    [{
+      issue: { key: 'PROJ-3', fields: { attachment: [inline, unreferenced] } },
+      filePath,
+      dir: tmpDir,
+    }],
+    page,
+    25,
+    { downloadAll: false }
+  );
+
+  assert.deepEqual(stats, { downloaded: 1, skipped: 0, failed: 0 });
+  assert.deepEqual(requested, [inline.content]);
+  assert.ok(fs.existsSync(path.join(tmpDir, 'attachments', '1-inline.png')));
+  assert.ok(!fs.existsSync(path.join(tmpDir, 'attachments', '2-spec.pdf')));
+
+  const md = fs.readFileSync(filePath, 'utf8');
+  assert.match(md, /!\[attachment\]\(attachments\/1-inline\.png\)/);
+  // The whole-issue list belongs to the full attachment export, not to this mode.
+  assert.doesNotMatch(md, /## Attachments/);
+});
+
+test('downloadAttachments falls back to the Jira URL when a download does not happen', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-att-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  const big = {
+    id: '1',
+    filename: 'huge.png',
+    size: 50 * 1024 * 1024,
+    mediaApiFileId: UUID,
+    content: 'https://jira.example/rest/api/3/attachment/content/1',
+  };
+  const denied = {
+    id: '2',
+    filename: 'denied.png',
+    size: 1024,
+    content: 'https://jira.example/rest/api/3/attachment/content/2',
+  };
+
+  const filePath = path.join(tmpDir, 'PROJ-4-thing.md');
+  fs.writeFileSync(
+    filePath,
+    `# PROJ-4\n\n![huge.png](attachment:${UUID})\n\n![denied.png](attachment:unknown-key)\n`
+  );
+
+  const page = {
+    request: { get: async () => ({ ok: () => false, status: () => 403 }) },
+  };
+
+  const stats = await downloadAttachments(
+    [{
+      issue: { key: 'PROJ-4', fields: { attachment: [big, denied] } },
+      filePath,
+      dir: tmpDir,
+    }],
+    page,
+    25,
+    { downloadAll: false }
+  );
+
+  assert.deepEqual(stats, { downloaded: 0, skipped: 1, failed: 1 });
+
+  const md = fs.readFileSync(filePath, 'utf8');
+  assert.match(md, /!\[huge\.png\]\(https:\/\/jira\.example\/rest\/api\/3\/attachment\/content\/1\)/);
+  // Matched by its alt text, so the failed download still resolves to Jira.
+  assert.match(md, /!\[denied\.png\]\(https:\/\/jira\.example\/rest\/api\/3\/attachment\/content\/2\)/);
+  assert.doesNotMatch(md, /attachment:/);
 });

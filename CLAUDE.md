@@ -40,8 +40,10 @@ The implementation remains in `export-issues.js`; focused tests live under
 4. **Layout** (`generateMarkdown` → `generatePath` →
    `generateIssueFiles`) — write `index.md` and the nested issue tree. Subtasks
    are leaf files; other types are directories with `_<issuetype>.md` files.
-5. **Attachments** (`downloadAttachments`) — when enabled, download issue
-   attachments after Markdown generation and rewrite matching ADF placeholders.
+5. **Attachments** (`downloadAttachments`) — after Markdown generation, fetch
+   the attachments each file references inline and rewrite their ADF
+   placeholders; with `JIRA_DOWNLOAD_ATTACHMENTS=1`, fetch every attachment and
+   append an `## Attachments` list.
 6. **ADF → Markdown** (`descriptionToMd` and the `process*` helpers) —
    recursively convert supported Atlassian Document Format blocks, inline
    nodes, and marks.
@@ -63,9 +65,11 @@ The implementation remains in `export-issues.js`; focused tests live under
   export directory but refuses `/`, `$HOME`, cwd, and the repo root. Invalid CLI
   input is rejected before output is touched. Missing parents produce top-level
   orphan subtrees instead of aborting the export.
-- Attachment downloads are opt-in, size-limited, and best-effort. Unmatched
-  media placeholders remain visible, and successfully downloaded files are
-  still listed in the issue Markdown.
+- Inline media is always resolved; `JIRA_DOWNLOAD_ATTACHMENTS` only widens the
+  fetch to an issue's whole attachment set and adds the `## Attachments` list.
+  Downloads are size-limited and best-effort: a placeholder whose attachment was
+  skipped or failed falls back to the Jira URL, and one that matches no
+  attachment stays visible as `attachment:<id>`.
 - `.env`, `.jira-session.json`, `exported-issues/`, and `output/` are local
   artifacts. Treat storage-state files as credentials; never commit Jira
   sessions, credentials, or exported issue data.

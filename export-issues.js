@@ -143,10 +143,10 @@ async function generateMarkdown(issues, page) {
 
   console.log(`[*] Processing ${rootIssues.length} root issues...`);
 
-  // Generate files for each root issue and its children. When attachments are
-  // enabled, each write is also recorded so they can be fetched afterwards;
-  // generateIssueFiles itself stays synchronous.
-  const writes = DOWNLOAD_ATTACHMENTS ? [] : null;
+  // Generate files for each root issue and its children. Every write is
+  // recorded so attachments can be resolved afterwards; generateIssueFiles
+  // itself stays synchronous.
+  const writes = [];
   rootIssues.forEach(rootIssue => {
     const pathInfo = generatePath(rootIssue, allIssuesMap);
     generateIssueFiles(rootIssue, pathInfo, OUTPUT_DIR, allIssuesMap, writes);
@@ -154,8 +154,12 @@ async function generateMarkdown(issues, page) {
 
   fs.writeFileSync(path.join(OUTPUT_DIR, 'index.md'), renderIndex(issues, rootIssues, allIssuesMap));
 
-  if (writes && page) {
-    await downloadAttachments(writes, page, MAX_ATTACHMENT_MB);
+  // Inline media is resolved either way: with DOWNLOAD_ATTACHMENTS off, only
+  // the attachments a Markdown file actually references are fetched.
+  if (page) {
+    await downloadAttachments(writes, page, MAX_ATTACHMENT_MB, {
+      downloadAll: DOWNLOAD_ATTACHMENTS,
+    });
   }
 }
 
@@ -298,12 +302,26 @@ function attachmentKeys(att, { skipFilename = false } = {}) {
   return [...keys];
 }
 
-// Replace `attachment:<key>` placeholders using a Map<key, relativePath>. The
-// link text is tried as a fallback key because Jira usually sets a media node's
-// alt text to the attachment filename. Unresolved placeholders are left as-is.
+const ATTACHMENT_LINK = /(!?)\[([^\]]*)\]\(attachment:([^)]+)\)/g;
+
+// Every `attachment:<key>` placeholder in a Markdown file, as the set of strings
+// that could identify the attachment behind it: the placeholder key itself and
+// the link text (Jira usually sets a media node's alt text to the filename).
+function collectPlaceholderKeys(markdown) {
+  const keys = new Set();
+  for (const [, , alt, key] of markdown.matchAll(ATTACHMENT_LINK)) {
+    keys.add(key);
+    if (alt) keys.add(alt);
+  }
+  return keys;
+}
+
+// Replace `attachment:<key>` placeholders using a Map<key, target>. The link
+// text is tried as a fallback key because Jira usually sets a media node's alt
+// text to the attachment filename. Unresolved placeholders are left as-is.
 function rewriteAttachmentLinks(markdown, mapping) {
   return markdown.replace(
-    /(!?)\[([^\]]*)\]\(attachment:([^)]+)\)/g,
+    ATTACHMENT_LINK,
     (match, bang, alt, key) => {
       const target = mapping.get(key) || mapping.get(alt);
       return target ? `${bang}[${alt}](${target})` : match;
@@ -315,10 +333,14 @@ function renderAttachmentList(entries) {
   return `\n\n## Attachments\n\n${entries.map(e => `- [${e.filename}](${e.relPath})`).join('\n')}\n`;
 }
 
-// Fetch every attachment of every written issue file, then rewrite that file's
-// placeholders and append a link list. Failures are logged and skipped so one
-// bad attachment never aborts the export.
-async function downloadAttachments(writes, page, maxMb) {
+// Resolve the attachments of every written issue file. An attachment is fetched
+// when it is referenced by an inline placeholder in that file, or when
+// `downloadAll` asks for the issue's whole attachment set; anything fetched is
+// rewritten to its local path. A placeholder whose attachment was skipped or
+// failed falls back to the Jira URL, which at least resolves for a logged-in
+// reader, instead of staying an unusable `attachment:` link. Failures are
+// logged and skipped so one bad attachment never aborts the export.
+async function downloadAttachments(writes, page, maxMb, { downloadAll = true } = {}) {
   const limit = maxMb * 1024 * 1024;
   let downloaded = 0;
   let skipped = 0;
@@ -327,6 +349,9 @@ async function downloadAttachments(writes, page, maxMb) {
   for (const { issue, filePath, dir } of writes) {
     const attachments = issue.fields?.attachment || [];
     if (attachments.length === 0) continue;
+
+    const markdown = fs.readFileSync(filePath, 'utf8');
+    const referenced = collectPlaceholderKeys(markdown);
 
     const seen = new Set();
     const ambiguous = new Set();
@@ -345,10 +370,23 @@ async function downloadAttachments(writes, page, maxMb) {
 
     for (const att of attachments) {
       const label = att.filename || att.id;
+      const keys = attachmentKeys(att, { skipFilename: ambiguous.has(att.filename) });
+      const isReferenced = keys.some(key => referenced.has(key));
+
+      // Without downloadAll only inline media is worth fetching; the rest of the
+      // issue's attachments are not linked from the Markdown anyway.
+      if (!downloadAll && !isReferenced) continue;
+
+      // A placeholder that cannot be stored locally still points somewhere.
+      const fallback = () => {
+        if (!isReferenced || !att.content) return;
+        keys.forEach(key => mapping.set(key, att.content));
+      };
 
       if (att.size > limit) {
         console.log(`[-] Skipping ${label} (${(att.size / 1024 / 1024).toFixed(1)} MB > ${maxMb} MB)`);
         skipped++;
+        fallback();
         continue;
       }
       if (!att.content) {
@@ -363,11 +401,13 @@ async function downloadAttachments(writes, page, maxMb) {
       } catch (error) {
         console.log(`[-] Failed to download ${label}: ${error.message}`);
         failed++;
+        fallback();
         continue;
       }
       if (!res.ok()) {
         console.log(`[-] Failed to download ${label} (${res.status ? res.status() : 'not ok'})`);
         failed++;
+        fallback();
         continue;
       }
 
@@ -378,14 +418,15 @@ async function downloadAttachments(writes, page, maxMb) {
       downloaded++;
 
       const relPath = `attachments/${name}`;
-      attachmentKeys(att, { skipFilename: ambiguous.has(att.filename) })
-        .forEach(key => mapping.set(key, relPath));
+      keys.forEach(key => mapping.set(key, relPath));
       listed.push({ filename: label, relPath });
     }
 
-    if (listed.length === 0) continue;
-    const markdown = fs.readFileSync(filePath, 'utf8');
-    fs.writeFileSync(filePath, rewriteAttachmentLinks(markdown, mapping) + renderAttachmentList(listed));
+    const rewritten = rewriteAttachmentLinks(markdown, mapping);
+    const withList = downloadAll && listed.length > 0
+      ? rewritten + renderAttachmentList(listed)
+      : rewritten;
+    if (withList !== markdown) fs.writeFileSync(filePath, withList);
   }
 
   console.log(`[+] Attachments: ${downloaded} downloaded, ${skipped} skipped, ${failed} failed`);
@@ -874,6 +915,7 @@ module.exports = {
   generateMarkdown,
   attachmentFilename,
   attachmentKeys,
+  collectPlaceholderKeys,
   rewriteAttachmentLinks,
   downloadAttachments,
   infoFilename,

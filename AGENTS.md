@@ -44,9 +44,11 @@ The export pipeline in `export-issues.js` is:
    missing ancestors from `/rest/api/3/issue/{key}`. It does not fetch children
    of a single issue selected on the command line.
 4. `generateMarkdown`, `generatePath`, and `generateIssueFiles` build the
-   nested issue tree and write `index.md` plus issue Markdown files. When
-   enabled, `downloadAttachments` downloads issue attachments and rewrites
-   matching ADF placeholders after the Markdown files are written.
+   nested issue tree and write `index.md` plus issue Markdown files.
+   `downloadAttachments` then fetches the attachments those files reference
+   inline and rewrites their ADF placeholders; with
+   `JIRA_DOWNLOAD_ATTACHMENTS=1` it fetches every attachment and appends an
+   `## Attachments` list.
 5. `descriptionToMd` and the `process*` helpers recursively convert supported
    Atlassian Document Format nodes and marks to Markdown.
 
@@ -75,9 +77,12 @@ The export pipeline in `export-issues.js` is:
   delete `/`, `$HOME`, the cwd, or the repo root. Invalid CLI input is rejected
   before output is touched. Parent-fetch failures are logged and their orphaned
   subtrees are exported at the top level.
-- Attachment downloads are opt-in, size-limited, and best-effort. Media UUIDs
-  do not always match REST attachment IDs, so unmatched placeholders remain
-  visible while downloaded files are still listed in the issue document.
+- Inline media is always resolved; `JIRA_DOWNLOAD_ATTACHMENTS` only widens the
+  fetch to an issue's whole attachment set and adds the `## Attachments` list.
+  Downloads are size-limited and best-effort. Media UUIDs do not always match
+  REST attachment IDs: a placeholder whose attachment was skipped or failed
+  falls back to the Jira URL, and one that matches nothing at all remains
+  visible as `attachment:<id>`.
 - `.env`, `.jira-session.json`, `exported-issues/`, and `output/` are local
   artifacts and must not be committed. Treat storage-state files as credentials
   and never add Jira session data, credentials, or exported issue data.
