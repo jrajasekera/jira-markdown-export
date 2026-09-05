@@ -1,5 +1,5 @@
 # Dolt database (managed by Dolt, not git)
-interactions.jsonl
+/interactions.jsonl
 dolt/
 embeddeddolt/
 proxieddb/
